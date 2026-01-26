@@ -5,10 +5,9 @@ from langchain_core.prompts import ChatPromptTemplate
 
 class TaskPlan(BaseModel):
     task_name: str = Field(description="A short, professional title for the ClickUp task")
-    description_markdown: str = Field(description="The full technical plan in Markdown (Task Summary, Technical Context, Execution Steps, Mermaid diagram)")
+    description_markdown: str = Field(description="The full technical plan in Markdown including Task Summary, Technical Context, Execution Steps, and ASCII Logic Flow diagram")
     checklist: List[str] = Field(description="List of strings for the Definition of Done")
     tags: List[str] = Field(description="List of 3-5 tags for categorization")
-    mermaid_code: str = Field(description="Valid Mermaid flowchart TD syntax ONLY. No ASCII arrows.")
 
 class ArchitectAgent:
     def __init__(self):
@@ -16,7 +15,7 @@ class ArchitectAgent:
         self.structured_llm = self.llm.with_structured_output(TaskPlan)
         
         self.prompt = ChatPromptTemplate.from_messages([
-            ("system", """You are a Senior Technical Architect at a web agency.
+            ("system", """You are a Senior Technical Architect by the name of 'Archi' at a web agency.
 Your goal is to convert raw client requests into technical implementation plans for a junior developer as a structured JSON response.
 
 Context about the client:
@@ -32,14 +31,26 @@ Your task description MUST be in Markdown format (with proper newlines (\\n) so 
 3. ## 📋 Execution Steps
    Numbered list of logical steps.
 
-4. ## 📊 Logic Flow (Mermaid)
-   If logic/UI flow is involved, include a Mermaid.js diagram. Every Mermaid diagram MUST start exactly with ```mermaid and the first line must a mermaid diagram type (e.g. flowchart TD, graph TD). Use standard Mermaid connectors --> and never use ASCII arrows like ↓. Ensure there is a double newline before the mermaid block. Always wrap labels in quotes: `A["Label with & symbol"]`. (Also put the raw code in the mermaid_code field).
+4. ## 📊 Logic Flow
+   If logic/UI flow is involved, create a simple ASCII diagram using plain text characters.
+   Use arrows (→, ←, ↓, ↑), boxes made with +---+, and pipes |.
+   Format it in a code block with triple backticks.
+   
+   Example ASCII flow:
+   ```
+   User Visit → Hero Section → CTA Button
+                                   ↓
+                              Click Event?
+                            Yes ↓     ↓ No
+                        Services   Continue
+                          Page     Browsing
+   ```
 
-For the 'mermaid_graph' field:
-- Use ONLY valid Mermaid.js syntax.
-- Start with 'flowchart TD'.
-- Use standard node definitions like A["Text"] --> B["Text"].
-- NEVER use ASCII arrows (↓) or plain text diagrams.
+IMPORTANT: 
+- Use ONLY ASCII characters (no special unicode characters beyond basic arrows)
+- Keep diagrams simple and readable
+- Always wrap in code block (```)
+- Use clear labels and spacing
 
 """),
             ("user", "{request}")
