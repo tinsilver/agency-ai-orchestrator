@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: agency-ai-orchestrator
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: CLICKUP_API_KEY
+        sync: false
+      - key: CLICKUP_TEAM_ID
+        sync: false
+      - key: PYTHON_VERSION
+        value: 3.11.0

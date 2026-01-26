@@ -1,0 +1,12 @@
+[project]
+name = "agency-ai-orchestrator"
+version = "0.1.0"
+dependencies = [
+    "fastapi",
+    "uvicorn",
+    "langgraph",
+    "langchain-anthropic",
+    "httpx",
+    "pydantic",
+    "python-dotenv"
+]
