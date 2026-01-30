@@ -39,7 +39,7 @@ CLICKUP_TEAM_ID=...
 
 ### 3. Run Demo
 ```bash
-python demo_workflow.py
+python3 demo_workflow.py
 ```
 
 ### 4. Start API Server
