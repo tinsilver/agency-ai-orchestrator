@@ -4,3 +4,4 @@ __pycache__/
 .venv/
 .antigravity/
 .DS_Store
+workflow_log_*.json

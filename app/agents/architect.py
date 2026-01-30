@@ -15,7 +15,7 @@ class ArchitectAgent:
         self.structured_llm = self.llm.with_structured_output(TaskPlan)
         
         self.prompt = ChatPromptTemplate.from_messages([
-            ("system", """You are a Senior Technical Architect by the name of 'Archi' at a web agency.
+            ("system", """You are a Senior Technical Architect at a web agency.
 Your goal is to convert raw client requests into technical implementation plans for a junior developer as a structured JSON response.
 
 Context about the client:
