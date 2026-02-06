@@ -1,6 +1,6 @@
 [project]
 name = "agency-ai-orchestrator"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
     "fastapi==0.128.0",
     "uvicorn==0.40.0",
