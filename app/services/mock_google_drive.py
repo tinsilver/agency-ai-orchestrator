@@ -5,7 +5,7 @@ Maps fake file IDs to local test files.
 import os
 from typing import Dict, Any, Optional
 from docx import Document
-import PyPDF2
+import pypdf
 import io
 
 
@@ -92,7 +92,7 @@ class MockGoogleDriveService:
     def extract_text_from_pdf(self, file_bytes: bytes) -> str:
         """Extract text from a PDF document."""
         try:
-            pdf_reader = PyPDF2.PdfReader(io.BytesIO(file_bytes))
+            pdf_reader = pypdf.PdfReader(io.BytesIO(file_bytes))
             text = []
             
             for page in pdf_reader.pages:
