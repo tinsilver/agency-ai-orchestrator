@@ -5,7 +5,7 @@ from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseDownload
 from docx import Document
-import PyPDF2
+import pypdf
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -82,7 +82,7 @@ class GoogleDriveService:
     def extract_text_from_pdf(self, file_bytes: bytes) -> str:
         """Extract text from a PDF document."""
         try:
-            pdf_reader = PyPDF2.PdfReader(io.BytesIO(file_bytes))
+            pdf_reader = pypdf.PdfReader(io.BytesIO(file_bytes))
             text = []
             
             for page in pdf_reader.pages:
