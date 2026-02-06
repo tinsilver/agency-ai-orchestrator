@@ -15,11 +15,18 @@ class ArchitectAgent:
         self.structured_llm = self.llm.with_structured_output(TaskPlan)
         
         self.prompt = ChatPromptTemplate.from_messages([
-            ("system", """You are a Senior Technical Architect at a web agency.
-Your goal is to convert raw client requests into technical implementation plans for a junior developer as a structured JSON response.
+            ("system", """You are an Expert Agency Architect and SEO Specialist. 
+            
+            Your goal is to break down a client request into a detailed, step-by-step Technical Plan that a developer can execute.
+            
+            # Roles & Responsibilities
+            1. **Architect**: Design the technical solution, component structure, and logic flow.
+            2. **SEO Specialist**: If the request involves **New Pages** or **Copywriting**, you MUST perform an SEO Analysis relative to the client's existing `website_context`.
 
-Context about the client:
-{client_context}
+            # Inputs to Analyze
+            - **Client Context**: Brand guidelines, tech stack, and preferences.
+            - **File Attachments**: Spec documents or wireframes (if provided).
+            - **Website Context**: Existing structure, navigation, and content (scraped data).
 
 Your task description MUST be in Markdown format (with proper newlines (\\n) so it renders correctly) and include:
 1. ## 📝 Task Summary
@@ -45,6 +52,19 @@ Your task description MUST be in Markdown format (with proper newlines (\\n) so 
                         Services   Continue
                           Page     Browsing
    ```
+5. **Checklist**: A definition of done (DoD) list.
+6. **Tags**: List of relevant tags (e.g. "wordpress", "python", "agency-ai").
+
+# SEO Analysis Requirements (CONDITIONAL)
+IF the request involves creating a NEW PAGE or writing/editing TEXT COPY:
+- You MUST add a `## 🔍 SEO & Metadata` section to the description_markdown.
+- This section MUST include:
+- **Target Keyword Strategy**: Based on page topic.
+- **Recommended Title Tag**: Format: `[Page Topic] | [Brand Name]`.
+- **Meta Description**: Compelling summary (< 160 chars).
+- **URL Slug**: e.g. `/careers/senior-developer`.
+- **Schema Markup**: Recommend specific JSON-LD schemas (e.g. `JobPosting`, `Article`, `Service`).
+- **GSC Action**: "Request indexing in Google Search Console after publish."
 
 IMPORTANT: 
 - Use ONLY ASCII characters (no special unicode characters beyond basic arrows)
@@ -52,20 +72,50 @@ IMPORTANT:
 - Always wrap in code block (```)
 - Use clear labels and spacing
 
+{file_context}
+
+{website_context}
 """),
             ("user", "{request}")
         ])
         
         self.chain = self.prompt | self.structured_llm
 
-    def generate_plan(self, request: str, client_context: dict) -> Dict[str, Any]:
+    def generate_plan(self, request: str, client_context: dict, file_summaries: list = None, website_content: str = None) -> Dict[str, Any]:
         context_str = str(client_context)
-        # Result is a TaskPlan pydantic object
-        plan: TaskPlan = self.chain.invoke({"request": request, "client_context": context_str})
         
-        # We need to manually get usage since with_structured_output hides the raw message
-        # For simplicity, we'll return a dummy usage or we'd need to use a callback/different invoke.
-        # Let's simplify and just return the dict content.
+        # Format website content if available
+        website_context = ""
+        if website_content:
+             website_context = f"\n\n## 🌐 Existing Website Context\nUse this information to respect the current layout and structure:\n\n{website_content}\n"
+        
+        # Format file content if available
+        file_context = ""
+        if file_summaries:
+            file_context = "\n\n## 📎 Attached Files\nThe client has attached the following files:\n\n"
+            for file_summary in file_summaries:
+                if file_summary.get("error"):
+                    file_context += f"- ❌ Error: {file_summary['error']}\n"
+                else:
+                    filename = file_summary.get('filename', 'unknown')
+                    file_type = file_summary.get('type', 'unknown')
+                    content = file_summary.get('extracted_content', '')
+                    
+                    file_context += f"### File: {filename} ({file_type})\n"
+                    if content:
+                        file_context += f"```\n{content[:1000]}{'...' if len(content) > 1000 else ''}\n```\n\n"
+                    else:
+                        file_context += "(No text content extracted)\n\n"
+        else:
+            file_context = ""
+        
+        # Result is a TaskPlan pydantic object
+        plan: TaskPlan = self.chain.invoke({
+            "request": request, 
+            "client_context": context_str,
+            "file_context": file_context,
+            "website_context": website_context
+        })
         
         return {
             "content": plan.model_dump(),

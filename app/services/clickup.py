@@ -122,3 +122,29 @@ class ClickUpService:
             except httpx.HTTPError as e:
                 print(f"Error creating checklist item: {e}")
                 return {}
+
+    async def create_task_attachment(self, task_id: str, file_content: bytes, filename: str, content_type: str = None) -> Dict[str, Any]:
+        """Upload a file as an attachment to a task."""
+        if not self.api_key:
+             print("Warning: ClickUp credentials not found via env.")
+             return {"id": "mock-attachment-id", "url": "http://mock-attachment-url"}
+
+        url = f"{self.api_url}/task/{task_id}/attachment"
+        
+        # Files dict for httpx
+        files = {
+            "attachment": (filename, file_content, content_type)
+        }
+        
+        # Headers for attachment upload (do not set Content-Type, httpx handles it)
+        # However, we must pass the Authorization token
+        headers = {"Authorization": self.api_key}
+
+        async with httpx.AsyncClient() as client:
+            try:
+                response = await client.post(url, headers=headers, files=files)
+                response.raise_for_status()
+                return response.json()
+            except Exception as e:
+                print(f"Error uploading attachment {filename}: {e}")
+                return {"error": str(e)}

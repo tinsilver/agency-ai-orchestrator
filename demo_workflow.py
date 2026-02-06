@@ -15,11 +15,40 @@ import time
 import uuid
 
 async def run_demo():
+    """Run demo workflow with optional file attachments."""
+    import sys
+    
+    # Determine which scenario to run
+    scenario = sys.argv[1] if len(sys.argv) > 1 else "no_files"
+    
     request_id = str(uuid.uuid4())
     start_time = time.time()
     
-    # 1. Mock Input
-    input_json_str = """
+    if scenario == "with_files":
+        # Scenario with file attachments
+        input_json_str = """
+{
+  "Client ID": "thebusinessbeanstalk.co.uk",
+  "Client Request": "See attached wireframe for new contact form",
+  "Category": "Website Development",
+  "Priority": "High",
+  "Attached Files": ["mock_file_id_1", "mock_file_id_2"]
+}
+"""
+    elif scenario == "seo_content":
+        # Scenario for SEO/Content generation
+        input_json_str = """
+{
+  "Client ID": "thebusinessbeanstalk.co.uk",
+  "Client Request": "Create a new 'Careers' page for our agency. We need copy for a Senior Developer role.",
+  "Category": "Content Creation",
+  "Priority": "Medium",
+  "Timestamp": "2026-02-01T15:00:00Z"
+}
+"""
+    else:
+        # Scenario without files (default)
+        input_json_str = """
 {
   "Client ID": "thebusinessbeanstalk.co.uk",
   "Client Request": "I'd like to add a button to the home page, just below the hero, that links to the Services page.",
@@ -28,15 +57,17 @@ async def run_demo():
   "Timestamp": "2026-01-25T18:00:00Z"
 }
 """
+    
     input_data = json.loads(input_json_str)
     
-    print(f"--- 🚀 Starting Agency AI Workflow Demo (Req: {request_id}) ---")
+    print(f"--- 🚀 Starting Agency AI Workflow Demo (Scenario: {scenario}, Req: {request_id}) ---")
     print(f"Input: {json.dumps(input_data, indent=2)}")
     
     # 2. Map to AgentState
     initial_state = {
         "client_id": input_data["Client ID"], 
         "raw_request": input_data["Client Request"],
+        "attached_files": input_data.get("Attached Files", []),
         "history": [],
         "iterations": 0,
         "logs": {} # Initialize logs

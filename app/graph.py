@@ -1,14 +1,25 @@
 from typing import Literal
+import os
 from langgraph.graph import StateGraph, END
 
 from app.state import AgentState
 from app.services.clickup import ClickUpService
+from app.services.web_scraper import WebScraperService
 from app.agents.architect import ArchitectAgent
 from app.agents.review import ReviewAgent
 
+# File processing service (use mock if no Google Drive credentials)
+USE_REAL_DRIVE = bool(os.getenv("GOOGLE_DRIVE_CREDENTIALS"))
+if USE_REAL_DRIVE:
+    from app.services.google_drive import GoogleDriveService
+    drive_service = GoogleDriveService()
+else:
+    from app.services.mock_google_drive import MockGoogleDriveService
+    drive_service = MockGoogleDriveService()
+
 # Initialize Services & Agents
-# airtable_service removed
 clickup_service = ClickUpService()
+web_scraper = WebScraperService()
 architect_agent = ArchitectAgent()
 review_agent = ReviewAgent()
 
@@ -19,15 +30,17 @@ SITE_PARAMETERS_LIST_ID = "901520311911"
 DINESH_UPWORK_LIST_ID = "901520311855"
 
 async def enrichment_node(state: AgentState):
-    """Fetch client data from ClickUp Task."""
+    """Fetch client data from ClickUp Task and scrape website."""
     client_name = state["client_id"] # Matches "Client ID" from form, e.g. domain name
+    history = state.get("history", [])
+    website_content = None
     
-    # 1. Find the task in "Site Parameters" list that matches the client name
+    # 1. ClickUp Enrichment
+    # Find the task in "Site Parameters" list that matches the client name
     tasks = await clickup_service.get_tasks(SITE_PARAMETERS_LIST_ID)
     target_task = next((t for t in tasks if t["name"] == client_name), None)
     
     context = {}
-    history = state.get("history", [])
 
     if target_task:
         task_id = target_task["id"]
@@ -46,21 +59,68 @@ async def enrichment_node(state: AgentState):
             action = f"Failed to get details for task {task_id}"
     else:
         action = f"Could not find Client Task '{client_name}' in Site Parameters"
-        # Fallback for demo if not found?
         context["Note"] = "Context not found, using defaults if any"
 
     history.append(action)
-    
+
+    # 2. Website Scraping
+    # If client_id looks like a domain, try to scrape it
+    if "." in client_name and not " " in client_name:
+        scrape_result = await web_scraper.scrape_url(client_name)
+        if not scrape_result.get("error"):
+            website_content = (
+                f"Page Title: {scrape_result['title']}\n"
+                f"Description: {scrape_result['description']}\n\n"
+                f"--- Structure Summary ---\n{scrape_result['structure_summary']}\n\n"
+                f"--- Detected Sections ---\n{', '.join(scrape_result['detected_sections'])}\n\n"
+                f"--- Content Preview ---\n{scrape_result['full_text'][:2000]}..."
+            )
+            history.append(f"Scraped website content from {scrape_result['url']}")
+        else:
+            history.append(f"Failed to scrape {client_name}: {scrape_result['error']}")
+
     return {
         "client_context": context,
+        "website_content": website_content,
         "history": history,
         "iterations": state.get("iterations", 0)
+    }
+
+async def file_processing_node(state: AgentState):
+    """Process attached files using Google Drive API."""
+    file_ids = state.get("attached_files", [])
+    history = state.get("history", [])
+    
+    if not file_ids:
+        # No files attached, skip processing
+        return {
+            "file_summaries": [],
+            "history": history
+        }
+    
+    file_summaries = []
+    
+    for file_id in file_ids:
+        content = await drive_service.get_file_content(file_id)
+        file_summaries.append(content)
+        
+        # Log the processing
+        if content.get("error"):
+            history.append(f"Error processing file {file_id}: {content['error']}")
+        else:
+            history.append(f"Processed file '{content.get('filename')}' ({content.get('type')})")
+    
+    return {
+        "file_summaries": file_summaries,
+        "history": history
     }
 
 def architect_node(state: AgentState):
     """Generate the technical plan."""
     request = state["raw_request"]
     context = state.get("client_context", {})
+    file_summaries = state.get("file_summaries", [])
+    website_content = state.get("website_content")
     logs = state.get("logs", {})
     
     # Check if we have critique from previous turn to add to context
@@ -69,7 +129,7 @@ def architect_node(state: AgentState):
         full_prompt_input += f"\n\nPREVIOUS REVIEW CRITIQUE (Fix this): {state['critique']}"
 
     # Agent now returns Dict with content, model, usage
-    result = architect_agent.generate_plan(full_prompt_input, context)
+    result = architect_agent.generate_plan(full_prompt_input, context, file_summaries, website_content)
     
     # Update logs
     logs["architect"] = {
@@ -170,6 +230,33 @@ async def clickup_push_node(state: AgentState):
             for item in checklist_items:
                 await clickup_service.create_checklist_item(checklist_id, item)
 
+    # 3. Upload Attachments
+    attached_files = state.get("attached_files", [])
+    if task_id and attached_files:
+        for file_id in attached_files:
+            # Get file metadata for name/type
+            meta = await drive_service.get_file_metadata(file_id)
+            if not meta:
+                continue
+                
+            filename = meta.get("name", "unknown_file")
+            mime_type = meta.get("mimeType")
+            
+            # Download content
+            content = await drive_service.download_file(file_id)
+            if content:
+                print(f"Uploading attachment {filename} to ClickUp task {task_id}...")
+                att_res = await clickup_service.create_task_attachment(
+                    task_id, 
+                    content, 
+                    filename, 
+                    mime_type
+                )
+                if att_res.get("date"): # Successful upload usually returns date
+                    logs.setdefault("attachments", []).append(f"Uploaded: {filename}")
+                else:
+                    logs.setdefault("attachments", []).append(f"Failed: {filename}")
+
     # Log task details
     logs["clickup_task"] = {
         "url": task_url,
@@ -202,12 +289,14 @@ def should_continue(state: AgentState) -> Literal["architect", "push_to_clickup"
 workflow = StateGraph(AgentState)
 
 workflow.add_node("enrichment", enrichment_node)
+workflow.add_node("file_processing", file_processing_node)
 workflow.add_node("architect", architect_node)
 workflow.add_node("qa_reviewer", qa_reviewer_node)
 workflow.add_node("push_to_clickup", clickup_push_node)
 
 workflow.set_entry_point("enrichment")
-workflow.add_edge("enrichment", "architect")
+workflow.add_edge("enrichment", "file_processing")
+workflow.add_edge("file_processing", "architect")
 workflow.add_edge("architect", "qa_reviewer")
 
 workflow.add_conditional_edges(
