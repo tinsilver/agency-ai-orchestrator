@@ -2,6 +2,11 @@ import re
 from typing import Dict, Optional
 from langfuse import get_client
 
+# Claude Haiku 4.5 pricing (USD per token)
+PRICING = {
+    "claude-haiku-4-5-20251001": {"input": 1.00 / 1_000_000, "output": 5.00 / 1_000_000},
+}
+
 
 class LightweightValidator:
     """Quick sanity checks that run on every request. Reports scores to Langfuse."""
@@ -40,6 +45,31 @@ class LightweightValidator:
                 name=name,
                 value=value,
                 data_type="BOOLEAN",
+            )
+
+        return scores
+
+    def report_usage(self, usage: dict, model: str) -> Dict[str, float]:
+        """Send token usage and cost as NUMERIC scores to the current Langfuse trace."""
+        input_tokens = usage.get("input_tokens", 0)
+        output_tokens = usage.get("output_tokens", 0)
+        total_tokens = input_tokens + output_tokens
+
+        rates = PRICING.get(model, PRICING["claude-haiku-4-5-20251001"])
+        cost_usd = (input_tokens * rates["input"]) + (output_tokens * rates["output"])
+
+        scores = {
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens,
+            "total_tokens": total_tokens,
+            "cost_usd": round(cost_usd, 6),
+        }
+
+        for name, value in scores.items():
+            self.langfuse.score_current_trace(
+                name=name,
+                value=value,
+                data_type="NUMERIC",
             )
 
         return scores

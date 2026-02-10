@@ -31,6 +31,7 @@ validator = LightweightValidator()
 # List IDs from discovery
 SITE_PARAMETERS_LIST_ID = "901520311911"
 DINESH_UPWORK_LIST_ID = "901520311855"
+THEO_LIST_ID = "901520364480"
 
 @observe(name="enrichment-node")
 async def enrichment_node(state: AgentState):
@@ -136,7 +137,8 @@ def architect_node(state: AgentState):
 
     # Agent now returns Dict with content, model, usage
     result = architect_agent.generate_plan(full_prompt_input, context, file_summaries, website_content)
-    
+    validator.report_usage(result["usage"], result["model"])
+
     # Update logs
     logs["architect"] = {
         "model": result["model"],
@@ -168,6 +170,7 @@ def qa_reviewer_node(state: AgentState):
 
     # Agent now returns Dict
     result = review_agent.review_plan(request, plan_content)
+    validator.report_usage(result["usage"], result["model"])
     review_content = result["content"]
     
     # Update logs

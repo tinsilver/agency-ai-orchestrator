@@ -14,7 +14,7 @@ class TaskPlan(BaseModel):
 class ArchitectAgent:
     def __init__(self):
         self.llm = ChatAnthropic(model="claude-haiku-4-5-20251001", temperature=0)
-        self.structured_llm = self.llm.with_structured_output(TaskPlan)
+        self.structured_llm = self.llm.with_structured_output(TaskPlan, include_raw=True)
         self.prompt_manager = PromptManager()
 
     @observe(name="architect-generate-plan")
@@ -57,13 +57,16 @@ class ArchitectAgent:
 
         # Execute
         langfuse_handler = CallbackHandler()
-        plan: TaskPlan = chain.invoke(
+        result = chain.invoke(
             {},
             config={"callbacks": [langfuse_handler]}
         )
 
+        plan: TaskPlan = result["parsed"]
+        usage = result["raw"].response_metadata.get("usage", {})
+
         return {
             "content": plan.model_dump(),
             "model": self.llm.model,
-            "usage": {}
+            "usage": usage
         }

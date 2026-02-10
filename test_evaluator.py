@@ -52,6 +52,13 @@ def run_test():
     for name, value in scores.items():
         print(f"  {name}: {value}")
 
+    # Test 5: Usage reporting
+    print("\n--- Test 5: Usage reporting ---")
+    mock_usage = {"input_tokens": 1500, "output_tokens": 500}
+    usage_scores = validator.report_usage(mock_usage, "claude-haiku-4-5-20251001")
+    for name, value in usage_scores.items():
+        print(f"  {name}: {value}")
+
     trace_id = langfuse.get_current_trace_id()
     return trace_id
 
