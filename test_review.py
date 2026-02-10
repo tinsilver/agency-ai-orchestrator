@@ -3,9 +3,18 @@ from unittest.mock import Mock, patch
 from dotenv import load_dotenv
 load_dotenv()
 
+from langfuse import get_client
 from app.agents.review import ReviewAgent
 
 class TestReviewAgent:
+    def setup_method(self):
+        langfuse = get_client()
+        langfuse.update_current_trace(
+            session_id="test-review",
+            user_id="test-user",
+            tags=["test"],
+        )
+
     def test_review_plan_approval(self):
         """Test that a good plan gets approved"""
         agent = ReviewAgent()

@@ -2,10 +2,18 @@ import asyncio
 from dotenv import load_dotenv
 load_dotenv()
 
+from langfuse import get_client
 from app.agents.architect import ArchitectAgent
 
 async def test_architect_prompt_compilation():
     """Test that prompt variables compile correctly"""
+    langfuse = get_client()
+    langfuse.update_current_trace(
+        session_id="test-architect",
+        user_id="test-user",
+        tags=["test"],
+    )
+
     agent = ArchitectAgent()
     
     result = agent.generate_plan(

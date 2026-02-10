@@ -12,7 +12,7 @@ AI-powered workflow automation for web agency tasks. Converts client requests in
 
 ## 📋 Prerequisites
 
-- Python 3.11+
+- Python 3.12
 - ClickUp API key
 - Anthropic API key
 - ClickUp workspace with:

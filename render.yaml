@@ -12,4 +12,4 @@ services:
       - key: CLICKUP_TEAM_ID
         sync: false
       - key: PYTHON_VERSION
-        value: 3.11.0
+        value: 3.12.12
