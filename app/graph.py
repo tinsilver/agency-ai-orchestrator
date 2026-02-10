@@ -8,6 +8,7 @@ from app.services.clickup import ClickUpService
 from app.services.web_scraper import WebScraperService
 from app.agents.architect import ArchitectAgent
 from app.agents.review import ReviewAgent
+from app.domain.evaluator import LightweightValidator
 
 # File processing service (use mock if no Google Drive credentials)
 USE_REAL_DRIVE = bool(os.getenv("GOOGLE_DRIVE_CREDENTIALS"))
@@ -23,6 +24,7 @@ clickup_service = ClickUpService()
 web_scraper = WebScraperService()
 architect_agent = ArchitectAgent()
 review_agent = ReviewAgent()
+validator = LightweightValidator()
 
 # --- Node Definitions ---
 
@@ -161,6 +163,9 @@ def qa_reviewer_node(state: AgentState):
     request = state["raw_request"]
     logs = state.get("logs", {})
     
+    # Run lightweight validation checks
+    validator.validate(request_text=request, plan=plan_content)
+
     # Agent now returns Dict
     result = review_agent.review_plan(request, plan_content)
     review_content = result["content"]
