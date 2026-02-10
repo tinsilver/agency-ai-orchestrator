@@ -6,23 +6,34 @@ import sys
 # Ensure app can be imported
 sys.path.append(os.getcwd())
 
-from app.graph import app_graph
 from dotenv import load_dotenv
-
 load_dotenv()
+
+import app._compat  # noqa: F401 - Patch pydantic v1 for Python 3.14 before langfuse import
+
+from app.graph import app_graph
+from langfuse import observe, get_client, propagate_attributes
 
 import time
 import uuid
 
+@observe(name="demo-workflow")
 async def run_demo():
     """Run demo workflow with optional file attachments."""
     import sys
-    
+
     # Determine which scenario to run
     scenario = sys.argv[1] if len(sys.argv) > 1 else "no_files"
-    
+
     request_id = str(uuid.uuid4())
     start_time = time.time()
+
+    langfuse = get_client()
+    langfuse.update_current_trace(
+        session_id=f"demo-{request_id}",
+        user_id="demo-user",
+        tags=["demo", scenario],
+    )
     
     if scenario == "with_files":
         # Scenario with file attachments
@@ -131,3 +142,5 @@ async def run_demo():
 
 if __name__ == "__main__":
     asyncio.run(run_demo())
+    # Flush all pending Langfuse events before exit
+    get_client().flush()

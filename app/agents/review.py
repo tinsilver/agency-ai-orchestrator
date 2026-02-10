@@ -1,33 +1,57 @@
 from typing import Dict, Any
 from langchain_anthropic import ChatAnthropic
 from langchain_core.prompts import ChatPromptTemplate
-from langchain_core.output_parsers import StrOutputParser
+from langfuse import Langfuse, observe
+from langfuse.langchain import CallbackHandler
 
 class ReviewAgent:
     def __init__(self):
         self.llm = ChatAnthropic(model="claude-haiku-4-5-20251001", temperature=0)
+        self.langfuse = Langfuse()
+        self._prompt_cache = None
+        self._prompt_cache_time = None
+        self._cache_ttl = 300  # 5 minutes
+
+    def _get_prompt(self):
+        import time
+        current_time = time.time()
         
-        self.prompt = ChatPromptTemplate.from_messages([
-            ("system", """You are a QA Lead. Review the following Technical Plan and Mermaid diagram.
+        if (self._prompt_cache is None or 
+            self._prompt_cache_time is None or 
+            current_time - self._prompt_cache_time > self._cache_ttl):
             
-Criteria for APPROVAL:
-1. Mermaid diagram syntax is valid (no obvious syntax errors).
-2. Technical specs cover all parts of the client request.
-3. Steps are clear and actionable.
-
-Client Request: {request}
-
-If the plan is good, output ONLY the word "APPROVE".
-If not, output a concise critique explaining what needs to be fixed. Do not generate a new plan, just the critique.
-"""),
-            ("user", "{plan}")
-        ])
+            self._prompt_cache = self.langfuse.get_prompt("qa-review-agent", label="production")
+            self._prompt_cache_time = current_time
         
-        # Removed StrOutputParser
-        self.chain = self.prompt | self.llm
+        return self._prompt_cache
 
+    @observe(name="qa-review-plan")
     def review_plan(self, request: str, plan: str) -> Dict[str, Any]:
-        response = self.chain.invoke({"request": request, "plan": plan})
+        # Fetch prompt from Langfuse
+        prompt = self._get_prompt()
+        
+        # Compile prompt with variables
+        compiled_prompt = prompt.compile(
+            request=request,
+            plan=plan
+        )
+        
+        # Convert to LangChain format
+        messages = [
+            (msg["role"], msg["content"]) 
+            for msg in compiled_prompt
+        ]
+        
+        chat_prompt = ChatPromptTemplate.from_messages(messages)
+        chain = chat_prompt | self.llm
+        
+        # Execute
+        langfuse_handler = CallbackHandler()
+        response = chain.invoke(
+            {},  # Variables already compiled into the prompt
+            config={"callbacks": [langfuse_handler]}
+        )
+        
         return {
             "content": response.content,
             "model": self.llm.model,

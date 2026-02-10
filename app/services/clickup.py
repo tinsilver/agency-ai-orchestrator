@@ -2,6 +2,7 @@ import os
 import httpx
 from typing import List, Dict, Any, Optional
 from dotenv import load_dotenv
+from langfuse import observe
 
 load_dotenv()
 
@@ -30,6 +31,7 @@ class ClickUpService:
         url = f"{self.api_url}/folder/{folder_id}/list"
         return await self._get_paginated(url, "lists")
         
+    @observe(name="clickup-get-tasks")
     async def get_tasks(self, list_id: str, include_closed: bool = False) -> List[Dict[str, Any]]:
         """Get tasks in a list."""
         if not self.api_key: return []
@@ -49,6 +51,7 @@ class ClickUpService:
                 print(f"Error fetching from {url}: {e}")
                 return []
 
+    @observe(name="clickup-get-task-details")
     async def get_task_details(self, task_id: str) -> Optional[Dict[str, Any]]:
         """
         Fetch task details, including custom fields. 
@@ -75,6 +78,7 @@ class ClickUpService:
                 print(f"Error fetching ClickUp task {task_id}: {e}")
                 return None
 
+    @observe(name="clickup-create-task")
     async def create_task(self, list_id: str, name: str, description: str, tags: List[str] = []) -> Dict[str, Any]:
         """
         Create a task in a specific ClickUp List.

@@ -1,6 +1,7 @@
 from typing import Literal
 import os
 from langgraph.graph import StateGraph, END
+from langfuse import observe
 
 from app.state import AgentState
 from app.services.clickup import ClickUpService
@@ -29,6 +30,7 @@ review_agent = ReviewAgent()
 SITE_PARAMETERS_LIST_ID = "901520311911"
 DINESH_UPWORK_LIST_ID = "901520311855"
 
+@observe(name="enrichment-node")
 async def enrichment_node(state: AgentState):
     """Fetch client data from ClickUp Task and scrape website."""
     client_name = state["client_id"] # Matches "Client ID" from form, e.g. domain name
@@ -86,6 +88,7 @@ async def enrichment_node(state: AgentState):
         "iterations": state.get("iterations", 0)
     }
 
+@observe(name="file-processing-node")
 async def file_processing_node(state: AgentState):
     """Process attached files using Google Drive API."""
     file_ids = state.get("attached_files", [])
@@ -115,6 +118,7 @@ async def file_processing_node(state: AgentState):
         "history": history
     }
 
+@observe(name="architect-node")
 def architect_node(state: AgentState):
     """Generate the technical plan."""
     request = state["raw_request"]
@@ -144,6 +148,7 @@ def architect_node(state: AgentState):
         "history": state["history"] + ["Generated Technical Plan"]
     }
 
+@observe(name="qa-reviewer-node")
 def qa_reviewer_node(state: AgentState):
     """Review the plan."""
     plan_data = state.get("task_md", {})
@@ -179,6 +184,7 @@ def qa_reviewer_node(state: AgentState):
         "history": state["history"] + [f"QA Review: {'APPROVED' if not critique else 'REJECTED: ' + critique}"]
     }
 
+@observe(name="clickup-push-node")
 async def clickup_push_node(state: AgentState):
     """Push to ClickUp."""
     # Push to specific list: Dinesh - Upwork

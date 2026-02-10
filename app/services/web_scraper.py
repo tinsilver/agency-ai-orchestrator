@@ -1,6 +1,7 @@
 import httpx
 from bs4 import BeautifulSoup
 from typing import Dict, Any, Optional, List
+from langfuse import observe
 
 class WebScraperService:
     """Service to fetch and parse website content for AI context."""
@@ -10,6 +11,7 @@ class WebScraperService:
             "User-Agent": "AgencyAI/1.0 (Testing from theoruby.com)"
         }
 
+    @observe(name="web-scraper")
     async def scrape_url(self, url: str) -> Dict[str, Any]:
         """
         Fetches URL and returns structured content summary.
