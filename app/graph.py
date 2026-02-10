@@ -6,7 +6,8 @@ from app.state import AgentState
 from app.services.clickup import ClickUpService
 from app.services.web_scraper import WebScraperService
 from app.agents.architect import ArchitectAgent
-from app.agents.review import ReviewAgent
+from app.evals.input_eval import InputEvaluator
+from app.evals.output_eval import OutputEvaluator
 
 # File processing service (use mock if no Google Drive credentials)
 USE_REAL_DRIVE = bool(os.getenv("GOOGLE_DRIVE_CREDENTIALS"))
@@ -21,13 +22,60 @@ else:
 clickup_service = ClickUpService()
 web_scraper = WebScraperService()
 architect_agent = ArchitectAgent()
-review_agent = ReviewAgent()
+input_evaluator = InputEvaluator()
+output_evaluator = OutputEvaluator()
 
 # --- Node Definitions ---
 
 # List IDs from discovery
 SITE_PARAMETERS_LIST_ID = "901520311911"
 DINESH_UPWORK_LIST_ID = "901520311855"
+
+def input_eval_node(state: AgentState):
+    """Eval 1: Validate the incoming request using Binary Criteria Framework."""
+    history = state.get("history", [])
+    logs = state.get("logs", {})
+
+    result = input_evaluator.evaluate(state["client_id"], state["raw_request"])
+
+    # Log the full binary criteria evaluation
+    logs["input_eval"] = {
+        "model": result["model"],
+        "score": result["score"],
+        "category": result["category"],
+        "is_valid": result["is_valid"],
+        "reason": result["reason"],
+        "issues": result.get("issues", []),
+        "auto_fail_triggered": result.get("auto_fail_triggered", False),
+        "auto_fail_checks": result.get("auto_fail_checks", []),
+        "dimension_results": result.get("dimension_results", []),
+        "all_dimensions_passed": result.get("all_dimensions_passed", False),
+        "failed_criteria_fixes": result.get("failed_criteria_fixes", []),
+        "bar_raiser_decision": result.get("bar_raiser_decision", ""),
+    }
+
+    if result["is_valid"]:
+        history.append(f"Input Eval: PASSED (score={result['score']:.2f}, category={result['category']}) — {result.get('bar_raiser_decision', '')}")
+    else:
+        history.append(
+            f"Input Eval: REJECTED (score={result['score']:.2f}, category={result['category']}) — {result.get('bar_raiser_decision', result['reason'])}"
+        )
+
+    return {
+        "input_eval_passed": result["is_valid"],
+        "input_eval_result": result,
+        "history": history,
+        "logs": logs,
+        "iterations": state.get("iterations", 0),
+    }
+
+
+def should_proceed_after_input_eval(state: AgentState) -> Literal["enrichment", "__end__"]:
+    """Route: if input eval failed, skip the entire pipeline and end."""
+    if state.get("input_eval_passed", True):
+        return "enrichment"
+    return "__end__"
+
 
 async def enrichment_node(state: AgentState):
     """Fetch client data from ClickUp Task and scrape website."""
@@ -145,38 +193,67 @@ def architect_node(state: AgentState):
     }
 
 def qa_reviewer_node(state: AgentState):
-    """Review the plan."""
+    """Eval 2: Binary Criteria Framework evaluation with rubrics, auto-fails, delta reporting, and self-refinement."""
     plan_data = state.get("task_md", {})
-    # If plan_data is a dict (from new structured agent), get markdown. Else use as is (legacy).
     if isinstance(plan_data, dict):
         plan_content = plan_data.get("description_markdown", "")
     else:
         plan_content = str(plan_data)
-        
+
     request = state["raw_request"]
+    client_context = state.get("client_context", {})
     logs = state.get("logs", {})
-    
-    # Agent now returns Dict
-    result = review_agent.review_plan(request, plan_content)
-    review_content = result["content"]
-    
-    # Update logs
+
+    # Run the structured output eval
+    eval_result = output_evaluator.evaluate(request, plan_content, client_context)
+
     iteration = state.get("iterations", 0)
-    logs[f"qa_review_{iteration}"] = {
-        "model": result["model"],
-        "usage": result["usage"],
-        "result": review_content  # "APPROVE" or critique
+
+    # Log the full binary criteria evaluation
+    logs[f"output_eval_{iteration}"] = {
+        "model": eval_result["model"],
+        "verdict": eval_result["verdict"],
+        "bar_raiser_decision": eval_result.get("bar_raiser_decision", ""),
+        "auto_fail_triggered": eval_result.get("auto_fail_triggered", False),
+        "auto_fail_checks": eval_result.get("auto_fail_checks", []),
+        "dimension_results": eval_result.get("dimension_results", []),
+        "all_dimensions_passed": eval_result.get("all_dimensions_passed", False),
+        "total_criteria_passed": eval_result.get("total_criteria_passed", 0),
+        "total_criteria": eval_result.get("total_criteria", 0),
+        "failed_criteria_fixes": eval_result.get("failed_criteria_fixes", []),
+        "rubric_total": eval_result["rubric_total"],
+        "rubric_scores": eval_result["rubric_scores"],
+        "all_binary_passed": eval_result["all_binary_passed"],
+        "critique": eval_result["critique"],
+        "refinement_instructions": eval_result["refinement_instructions"],
     }
-    
+
+    # Delta reporting: compare with previous iteration if available
+    if iteration > 0:
+        prev_eval_key = f"output_eval_{iteration - 1}"
+        prev_eval = logs.get(prev_eval_key)
+        if prev_eval:
+            delta_report = output_evaluator.format_delta_report(prev_eval, eval_result, iteration)
+            logs[f"delta_report_{iteration}"] = delta_report
+
+    # Determine critique for the retry loop
     critique = None
-    if "APPROVE" not in review_content:
-        critique = review_content
-        
+    if eval_result["verdict"] != "APPROVE":
+        # Format structured feedback so the architect knows exactly what to fix
+        critique = output_evaluator.format_feedback_for_architect(eval_result)
+
+    verdict_display = eval_result["verdict"]
+    passed = eval_result.get("total_criteria_passed", 0)
+    total = eval_result.get("total_criteria", 0)
+    dims_status = "ALL PASS" if eval_result.get("all_dimensions_passed") else "FAILURES"
+
     return {
         "critique": critique,
         "iterations": state["iterations"] + 1,
         "logs": logs,
-        "history": state["history"] + [f"QA Review: {'APPROVED' if not critique else 'REJECTED: ' + critique}"]
+        "history": state["history"] + [
+            f"Output Eval: {verdict_display} ({passed}/{total} criteria, dims={dims_status}, rubric={eval_result['rubric_total']:.1f}/5.0)"
+        ],
     }
 
 async def clickup_push_node(state: AgentState):
@@ -288,13 +365,22 @@ def should_continue(state: AgentState) -> Literal["architect", "push_to_clickup"
 
 workflow = StateGraph(AgentState)
 
+workflow.add_node("input_eval", input_eval_node)
 workflow.add_node("enrichment", enrichment_node)
 workflow.add_node("file_processing", file_processing_node)
 workflow.add_node("architect", architect_node)
 workflow.add_node("qa_reviewer", qa_reviewer_node)
 workflow.add_node("push_to_clickup", clickup_push_node)
 
-workflow.set_entry_point("enrichment")
+workflow.set_entry_point("input_eval")
+workflow.add_conditional_edges(
+    "input_eval",
+    should_proceed_after_input_eval,
+    {
+        "enrichment": "enrichment",
+        "__end__": END,
+    }
+)
 workflow.add_edge("enrichment", "file_processing")
 workflow.add_edge("file_processing", "architect")
 workflow.add_edge("architect", "qa_reviewer")
