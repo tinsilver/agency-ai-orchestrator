@@ -8,6 +8,7 @@ from app.services.clickup import ClickUpService
 from app.services.web_scraper import WebScraperService
 from app.agents.architect import ArchitectAgent
 from app.agents.review import ReviewAgent
+from app.agents.request_validator import RequestValidatorAgent
 from app.domain.evaluator import LightweightValidator
 
 # File processing service (use mock if no Google Drive credentials)
@@ -24,6 +25,7 @@ clickup_service = ClickUpService()
 web_scraper = WebScraperService()
 architect_agent = ArchitectAgent()
 review_agent = ReviewAgent()
+request_validator = RequestValidatorAgent()
 validator = LightweightValidator()
 
 # --- Node Definitions ---
@@ -120,6 +122,99 @@ async def file_processing_node(state: AgentState):
         "file_summaries": file_summaries,
         "history": history
     }
+
+@observe(name="validate-request-node")
+def validate_request_node(state: AgentState):
+    """Classify the request and check completeness."""
+    request = state["raw_request"]
+    context = state.get("client_context", {})
+    file_summaries = state.get("file_summaries", [])
+    website_content = state.get("website_content")
+    logs = state.get("logs", {})
+    history = state.get("history", [])
+
+    result = request_validator.validate_and_classify(request, context, file_summaries, website_content)
+    validator.report_usage(result["usage"], result["model"])
+
+    classification = result["content"]
+
+    logs["request_validation"] = {
+        "model": result["model"],
+        "usage": result["usage"],
+        "classification": classification,
+    }
+
+    needs_admin = not classification["complete"]
+
+    history.append(
+        f"Request classified as '{classification['primary_category']}' "
+        f"(complete={classification['complete']}, confidence={classification['confidence']})"
+    )
+
+    return {
+        "request_category": classification["primary_category"],
+        "request_subcategories": classification.get("subcategories", []),
+        "is_request_complete": classification["complete"],
+        "missing_information": classification.get("missing", []),
+        "needs_admin_review": needs_admin,
+        "logs": logs,
+        "history": history,
+    }
+
+
+@observe(name="create-admin-task-node")
+async def create_admin_task_node(state: AgentState):
+    """Create a clarification task in Theo's ClickUp list for incomplete requests."""
+    client_id = state["client_id"]
+    request = state["raw_request"]
+    category = state.get("request_category", "unclear")
+    missing = state.get("missing_information", [])
+    context = state.get("client_context", {})
+    logs = state.get("logs", {})
+    history = state.get("history", [])
+
+    # Build markdown description
+    missing_md = "\n".join(f"- {item}" for item in missing) if missing else "- No specific items identified"
+    description = (
+        f"## Original Request\n"
+        f"> {request}\n\n"
+        f"## Classification\n"
+        f"- **Category:** {category}\n"
+        f"- **Subcategories:** {', '.join(state.get('request_subcategories', []) or ['none'])}\n\n"
+        f"## Missing Information\n"
+        f"The following details are needed before this can be turned into a technical spec:\n\n"
+        f"{missing_md}\n\n"
+        f"## Client Context\n"
+        f"```\n{context}\n```\n"
+    )
+
+    title = f"[{client_id}] Clarify: {request[:50]}{'...' if len(request) > 50 else ''}"
+    tags = ["needs-clarification", category, "agency-ai"]
+
+    result = await clickup_service.create_task(
+        list_id=THEO_LIST_ID,
+        name=title,
+        description=description,
+        tags=tags,
+    )
+
+    task_id = result.get("id")
+    task_url = result.get("url")
+
+    logs["admin_task"] = {
+        "id": task_id,
+        "url": task_url,
+        "name": title,
+    }
+
+    history.append(f"Created admin review task in ClickUp: {task_url or task_id}")
+
+    return {
+        "admin_task_id": task_id,
+        "logs": logs,
+        "history": history,
+    }
+
 
 @observe(name="architect-node")
 def architect_node(state: AgentState):
@@ -292,6 +387,12 @@ async def clickup_push_node(state: AgentState):
 
 # --- Routing Logic ---
 
+def route_after_validation(state: AgentState) -> Literal["architect", "create_admin_task"]:
+    if state.get("needs_admin_review"):
+        return "create_admin_task"
+    return "architect"
+
+
 def should_continue(state: AgentState) -> Literal["architect", "push_to_clickup"]:
     # Loop back if there is valid critique and < 3 iterations
     if state.get("critique") and state["iterations"] < 3:
@@ -304,13 +405,25 @@ workflow = StateGraph(AgentState)
 
 workflow.add_node("enrichment", enrichment_node)
 workflow.add_node("file_processing", file_processing_node)
+workflow.add_node("validate_request", validate_request_node)
+workflow.add_node("create_admin_task", create_admin_task_node)
 workflow.add_node("architect", architect_node)
 workflow.add_node("qa_reviewer", qa_reviewer_node)
 workflow.add_node("push_to_clickup", clickup_push_node)
 
 workflow.set_entry_point("enrichment")
 workflow.add_edge("enrichment", "file_processing")
-workflow.add_edge("file_processing", "architect")
+workflow.add_edge("file_processing", "validate_request")
+
+workflow.add_conditional_edges(
+    "validate_request",
+    route_after_validation,
+    {
+        "architect": "architect",
+        "create_admin_task": "create_admin_task",
+    }
+)
+
 workflow.add_edge("architect", "qa_reviewer")
 
 workflow.add_conditional_edges(
@@ -322,6 +435,7 @@ workflow.add_conditional_edges(
     }
 )
 
+workflow.add_edge("create_admin_task", END)
 workflow.add_edge("push_to_clickup", END)
 
 app_graph = workflow.compile()

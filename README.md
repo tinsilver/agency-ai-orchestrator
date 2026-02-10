@@ -6,18 +6,24 @@ AI-powered workflow automation for web agency tasks. Converts client requests in
 
 - **Google Form Integration**: Accept client requests via form submissions
 - **ClickUp Lookup**: Automatically enriches tasks with client context (tech stack, brand guidelines)
-- **AI Architect**: Generates detailed technical implementation plans using Claude
-- **QA Review**: Automated quality checks before task creation
-- **Structured Output**: Creates ClickUp tasks with markdown descriptions, checklists, and tags
+- **Website Scraping**: Scrapes client website structure to inform technical plans
+- **File Processing**: Extracts content from Google Drive attachments
+- **Request Pre-Check**: AI classifier validates request completeness before planning — incomplete requests get routed to admin review instead of wasting architect tokens
+- **AI Architect**: Generates detailed technical implementation plans using Claude (structured Pydantic output)
+- **QA Review**: Automated quality checks with self-correction loop (up to 3 iterations)
+- **Structured Output**: Creates ClickUp tasks with markdown descriptions, checklists, tags, and attachments
+- **Langfuse Observability**: Full tracing, prompt management, and cost tracking
 
 ## 📋 Prerequisites
 
-- Python 3.12
+- Python 3.12+
 - ClickUp API key
 - Anthropic API key
+- Langfuse instance (self-hosted or cloud) with prompts: `architect-agent`, `qa-review-agent`, `request-validator-classifier`
 - ClickUp workspace with:
   - **Clients** space → **Active** folder → **Site Parameters** list
   - **Virtual Assistants** space → **Active** folder → **Dinesh - Upwork** list
+  - **Theo** list (for admin review of incomplete requests)
 
 ## 🔧 Local Development
 
@@ -35,6 +41,9 @@ Create `.env` file:
 ANTHROPIC_API_KEY=sk-ant-...
 CLICKUP_API_KEY=pk_...
 CLICKUP_TEAM_ID=...
+LANGFUSE_SECRET_KEY=sk-lf-...
+LANGFUSE_PUBLIC_KEY=pk-lf-...
+LANGFUSE_BASE_URL=https://your-langfuse-instance.com
 ```
 
 ### 3. Run Demo
@@ -176,9 +185,20 @@ uvicorn app.main:app --reload
 
 ## 📊 Testing
 
-### Manual Test (Local)
+### Graph Verification (mocked, no API keys needed)
 ```bash
-python demo_workflow.py
+python verification.py
+```
+Tests both routing branches: complete requests flow through architect/QA/push, incomplete requests route to admin task.
+
+### Request Validator (live, needs Anthropic + Langfuse keys)
+```bash
+python test_request_validator.py
+```
+
+### Evaluator (live, needs Langfuse keys)
+```bash
+python test_evaluator.py
 ```
 
 ### API Test
@@ -186,15 +206,9 @@ python demo_workflow.py
 curl -X POST http://localhost:8000/webhook \
   -H "Content-Type: application/json" \
   -d '{
-    "Client ID": "thebusinessbeanstalk.co.uk",
-    "Client Request": "Add a contact form to the About page"
+    "client_id": "thebusinessbeanstalk.co.uk",
+    "request_text": "Add a contact form to the About page"
   }'
-```
-
-### Cleanup Test Task
-```bash
-curl -X DELETE https://api.clickup.com/api/v2/task/TASK_ID \
-  -H "Authorization: YOUR_CLICKUP_API_KEY"
 ```
 
 ## 📁 Project Structure
@@ -202,18 +216,29 @@ curl -X DELETE https://api.clickup.com/api/v2/task/TASK_ID \
 ```
 theoruby.com/
 ├── app/
-│   ├── main.py           # FastAPI app
-│   ├── graph.py          # LangGraph orchestration
-│   ├── state.py          # State management
+│   ├── main.py                    # FastAPI app
+│   ├── graph.py                   # LangGraph orchestration (nodes, routing, graph)
+│   ├── state.py                   # AgentState TypedDict + WebhookPayload
+│   ├── _compat.py                 # Pydantic v1 compatibility patch for Python 3.14
 │   ├── agents/
-│   │   ├── architect.py  # Plan generation
-│   │   └── review.py     # QA review
+│   │   ├── architect.py           # Plan generation (structured TaskPlan output)
+│   │   ├── review.py              # QA review
+│   │   └── request_validator.py   # Request classification & completeness check
+│   ├── domain/
+│   │   ├── evaluator.py           # Lightweight non-LLM validation + cost tracking
+│   │   ├── prompt_manager.py      # Langfuse prompt fetching & caching
+│   │   └── request_category.py    # Request category constants
 │   └── services/
-│       └── clickup.py    # ClickUp API client
-├── demo_workflow.py      # Test script
-├── requirements.txt      # Dependencies
-├── render.yaml          # Render config
-└── Procfile             # Railway/Heroku config
+│       ├── clickup.py             # ClickUp API client
+│       ├── google_drive.py        # Google Drive file processing
+│       ├── mock_google_drive.py   # Mock Drive service for local dev
+│       └── web_scraper.py         # Website structure scraper
+├── verification.py                # Graph integration test (both routing branches)
+├── test_request_validator.py      # Request validator live tests
+├── test_evaluator.py              # Evaluator live tests
+├── requirements.txt
+├── render.yaml
+└── Procfile
 ```
 
 ## 🛠 Troubleshooting
