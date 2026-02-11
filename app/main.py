@@ -33,6 +33,7 @@ async def handle_webhook(payload: WebhookPayload, background_tasks: BackgroundTa
     input_state = {
         "client_id": payload.client_id,
         "raw_request": payload.request_text,
+        "attached_files": payload.attached_files,
         "history": [],
         "iterations": 0
     }

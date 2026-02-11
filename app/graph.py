@@ -234,7 +234,7 @@ async def create_admin_task_node(state: AgentState):
     get_client().score_current_trace(name="workflow_interrupt", value=1, data_type="NUMERIC")
 
     return {
-        "admin_task_id": task_id,
+        "admin_task_id": task_url,
         "logs": logs,
         "history": history,
     }
@@ -417,11 +417,18 @@ def emit_to_n8n(state):
     """
     n8n_url = "https://primary-production-3d4e5.up.railway.app/webhook/33b65cfd-705e-4137-9aec-8a2f1fc23e44"
     
-    # Prepare the payload you want n8n to receive
+    logs = state.get("logs", {})
+    clickup_task_url = (
+        logs.get("clickup_task", {}).get("url")
+        or logs.get("admin_task", {}).get("url")
+    )
+
     payload = {
         "event": "workflow_completed",
-        "data": state.get("messages")[-1].content if "messages" in state else state,
-        "client_id": state.get("client_id", "unknown")
+        "client_id": state.get("client_id", "unknown"),
+        "clickup_task_url": clickup_task_url,
+        "needs_admin_review": state.get("needs_admin_review", False),
+        "request_category": state.get("request_category"),
     }
     
     try:
@@ -443,10 +450,12 @@ def route_after_validation(state: AgentState) -> Literal["architect", "create_ad
     return "architect"
 
 
-def should_continue(state: AgentState) -> Literal["architect", "push_to_clickup"]:
-    # Loop back if there is valid critique and < 3 iterations
+def should_continue(state: AgentState) -> Literal["architect", "push_to_clickup", "create_admin_task"]:
     if state.get("critique") and state["iterations"] < 3:
         return "architect"
+    if state.get("critique"):
+        # 3 rejections — route to admin review
+        return "create_admin_task"
     return "push_to_clickup"
 
 # --- Graph Construction ---
@@ -482,7 +491,8 @@ workflow.add_conditional_edges(
     should_continue,
     {
         "architect": "architect",
-        "push_to_clickup": "push_to_clickup"
+        "push_to_clickup": "push_to_clickup",
+        "create_admin_task": "create_admin_task",
     }
 )
 
