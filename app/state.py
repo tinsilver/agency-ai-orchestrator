@@ -29,4 +29,4 @@ class WebhookPayload(BaseModel):
     """
     client_id: str = Field(..., description="Unique ID of the client (domain name)")
     request_text: str = Field(..., description="Natural language change request")
-    file_ids: Optional[List[str]] = Field(default=None, description="Google Drive file IDs for attachments")
+    attached_files: Optional[List[str]] = Field(default=None, description="Google Drive file IDs for attachments")
