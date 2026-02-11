@@ -94,7 +94,7 @@ class RequestValidatorAgent:
             else:
                 filename = fs.get("filename", "unknown")
                 file_type = fs.get("type", "unknown")
-                content = fs.get("extracted_content", "")
+                content = fs.get("extracted_content") or ""
                 preview = content[:500] + "..." if len(content) > 500 else content
                 parts.append(f"- {filename} ({file_type}): {preview}")
 
