@@ -10,7 +10,7 @@ async def lifespan(app: FastAPI):
     # Flush pending Langfuse events on shutdown
     get_client().flush()
 
-app = FastAPI(title="Agency AI Orchestrator", lifespan=lifespan)
+app = FastAPI(title="Agency AI Orchestrator", lifespan=lifespan, redirect_slashes=False)
 
 @app.get("/")
 def read_root():

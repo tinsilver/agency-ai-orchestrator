@@ -1,7 +1,8 @@
 from typing import Literal
 import os
+import requests
 from langgraph.graph import StateGraph, END
-from langfuse import observe
+from langfuse import observe, get_client
 
 from app.state import AgentState
 from app.services.clickup import ClickUpService
@@ -201,6 +202,27 @@ async def create_admin_task_node(state: AgentState):
     task_id = result.get("id")
     task_url = result.get("url")
 
+    # Upload attachments so Theo has full context
+    attached_files = state.get("attached_files", [])
+    if task_id and attached_files:
+        for file_id in attached_files:
+            meta = await drive_service.get_file_metadata(file_id)
+            if not meta:
+                continue
+
+            filename = meta.get("name", "unknown_file")
+            mime_type = meta.get("mimeType")
+
+            content = await drive_service.download_file(file_id)
+            if content:
+                att_res = await clickup_service.create_task_attachment(
+                    task_id, content, filename, mime_type
+                )
+                if att_res.get("date"):
+                    logs.setdefault("attachments", []).append(f"Uploaded: {filename}")
+                else:
+                    logs.setdefault("attachments", []).append(f"Failed: {filename}")
+
     logs["admin_task"] = {
         "id": task_id,
         "url": task_url,
@@ -208,6 +230,8 @@ async def create_admin_task_node(state: AgentState):
     }
 
     history.append(f"Created admin review task in ClickUp: {task_url or task_id}")
+
+    get_client().score_current_trace(name="workflow_interrupt", value=1, data_type="NUMERIC")
 
     return {
         "admin_task_id": task_id,
@@ -379,11 +403,37 @@ async def clickup_push_node(state: AgentState):
         },
         "debug_is_structured": is_struct
     }
-    
+
+    get_client().score_current_trace(name="workflow_success", value=1, data_type="NUMERIC")
+
     return {
         "logs": logs,
         "history": state["history"] + [f"Pushed to ClickUp: {result.get('url', 'success')}"]
     }
+
+def emit_to_n8n(state):
+    """
+    Sends the final state (or specific results) to n8n.
+    """
+    n8n_url = "https://primary-production-3d4e5.up.railway.app/webhook/33b65cfd-705e-4137-9aec-8a2f1fc23e44"
+    
+    # Prepare the payload you want n8n to receive
+    payload = {
+        "event": "workflow_completed",
+        "data": state.get("messages")[-1].content if "messages" in state else state,
+        "client_id": state.get("client_id", "unknown")
+    }
+    
+    try:
+        # Use a timeout so LangGraph doesn't get stuck if n8n is slow
+        response = requests.post(n8n_url, json=payload, timeout=10)
+        response.raise_for_status()
+        print("Successfully notified n8n")
+    except Exception as e:
+        print(f"Failed to notify n8n: {e}")
+    
+    # Returning the state unchanged, as this is just a side-effect node
+    return state
 
 # --- Routing Logic ---
 
@@ -410,6 +460,7 @@ workflow.add_node("create_admin_task", create_admin_task_node)
 workflow.add_node("architect", architect_node)
 workflow.add_node("qa_reviewer", qa_reviewer_node)
 workflow.add_node("push_to_clickup", clickup_push_node)
+workflow.add_node("emit_to_n8n", emit_to_n8n)
 
 workflow.set_entry_point("enrichment")
 workflow.add_edge("enrichment", "file_processing")
@@ -435,7 +486,8 @@ workflow.add_conditional_edges(
     }
 )
 
-workflow.add_edge("create_admin_task", END)
-workflow.add_edge("push_to_clickup", END)
+workflow.add_edge("create_admin_task", "emit_to_n8n")
+workflow.add_edge("push_to_clickup", "emit_to_n8n")
+workflow.add_edge("emit_to_n8n", END)
 
 app_graph = workflow.compile()
