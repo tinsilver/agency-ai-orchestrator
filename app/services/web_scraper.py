@@ -2,6 +2,7 @@ import httpx
 from bs4 import BeautifulSoup
 from typing import Dict, Any, Optional, List
 from langfuse import observe
+from app.utils import ensure_url_with_protocol
 
 class WebScraperService:
     """Service to fetch and parse website content for AI context."""
@@ -17,8 +18,8 @@ class WebScraperService:
         Fetches URL and returns structured content summary.
         Includes title, meta description, and simplified structural outline.
         """
-        if not url.startswith("http"):
-            url = f"https://{url}"
+        # Ensure URL has protocol (handles both "example.com" and "https://example.com")
+        url = ensure_url_with_protocol(url)
 
         try:
             async with httpx.AsyncClient(verify=False, follow_redirects=True, timeout=15.0) as client:

@@ -7,6 +7,7 @@ from fastapi import FastAPI, HTTPException, BackgroundTasks
 from contextlib import asynccontextmanager
 from app.graph import app_graph
 from app.state import WebhookPayload
+from app.utils import sanitize_domain
 from langfuse import observe, get_client
 
 @asynccontextmanager
@@ -28,15 +29,19 @@ async def handle_webhook(payload: WebhookPayload, background_tasks: BackgroundTa
     Receives a webhook trigger (e.g. from a form or external app).
     Runs the LangGraph workflow.
     """
+    # Sanitize client_id to ensure consistent domain format
+    # Handles: "https://google.co.uk" → "google.co.uk", "www.example.com/" → "example.com"
+    clean_client_id = sanitize_domain(payload.client_id)
+
     langfuse = get_client()
     langfuse.update_current_trace(
-        session_id=f"webhook-{payload.client_id}",
-        user_id=payload.client_id,
+        session_id=f"webhook-{clean_client_id}",
+        user_id=clean_client_id,
         tags=["webhook", "production"],
     )
 
     input_state = {
-        "client_id": payload.client_id,
+        "client_id": clean_client_id,
         "raw_request": payload.request_text,
         "client_priority": payload.client_priority,
         "client_category": payload.client_category,

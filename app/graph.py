@@ -197,6 +197,7 @@ async def create_admin_task_node(state: AgentState):
     category = state.get("request_category", "unclear")
     missing = state.get("missing_information", [])
     context = state.get("client_context", {})
+    client_priority = state.get("client_priority")
     logs = state.get("logs", {})
     history = state.get("history", [])
 
@@ -207,7 +208,8 @@ async def create_admin_task_node(state: AgentState):
         f"> {request}\n\n"
         f"## Classification\n"
         f"- **Category:** {category}\n"
-        f"- **Subcategories:** {', '.join(state.get('request_subcategories', []) or ['none'])}\n\n"
+        f"- **Subcategories:** {', '.join(state.get('request_subcategories', []) or ['none'])}\n"
+        f"- **Client Priority:** {client_priority or 'Not specified'}\n\n"
         f"## Missing Information\n"
         f"The following details are needed before this can be turned into a technical spec:\n\n"
         f"{missing_md}\n\n"
@@ -218,15 +220,30 @@ async def create_admin_task_node(state: AgentState):
     title = f"[{client_id}] Clarify: {request[:50]}{'...' if len(request) > 50 else ''}"
     tags = ["needs-clarification", category, "agency-ai"]
 
+    # Determine priority for admin review tasks
+    # Use client's priority if provided, otherwise default to High (needs attention)
+    priority_str = client_priority if client_priority else "High"
+    priority = map_priority_to_clickup(priority_str)
+
     result = await clickup_service.create_task(
         list_id=THEO_LIST_ID,
         name=title,
         description=description,
         tags=tags,
+        priority=priority
     )
 
     task_id = result.get("id")
     task_url = result.get("url")
+
+    # Add checklist for missing information items (if any)
+    if task_id and missing:
+        checklist_res = await clickup_service.create_checklist(task_id, "Information to Gather")
+        checklist_id = checklist_res.get("checklist", {}).get("id")
+
+        if checklist_id:
+            for item in missing:
+                await clickup_service.create_checklist_item(checklist_id, item)
 
     # Upload attachments so Theo has full context
     attached_files = state.get("attached_files", [])
@@ -253,9 +270,16 @@ async def create_admin_task_node(state: AgentState):
         "id": task_id,
         "url": task_url,
         "name": title,
+        "payload_sent": {
+            "name": title,
+            "description": description,
+            "tags": tags,
+            "priority": priority,
+            "priority_string": priority_str,
+        }
     }
 
-    history.append(f"Created admin review task in ClickUp: {task_url or task_id}")
+    history.append(f"Created admin review task in ClickUp (Priority: {priority_str}): {task_url or task_id}")
 
     get_client().score_current_trace(name="workflow_interrupt", value=1, data_type="NUMERIC")
 
