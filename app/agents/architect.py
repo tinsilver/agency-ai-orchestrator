@@ -10,6 +10,8 @@ class TaskPlan(BaseModel):
     description_markdown: str = Field(description="The full technical plan in Markdown including Task Summary, Technical Context, Execution Steps, and ASCII Logic Flow diagram")
     checklist: List[str] = Field(description="List of strings for the Definition of Done")
     tags: List[str] = Field(description="List of 3-5 tags for categorization")
+    priority: str = Field(description="Final task priority: Low, Normal, High, or Urgent (considering client input and context)")
+    priority_reasoning: str = Field(description="Brief explanation of why this priority was chosen")
 
 class ArchitectAgent:
     def __init__(self):
@@ -18,7 +20,7 @@ class ArchitectAgent:
         self.prompt_manager = PromptManager()
 
     @observe(name="architect-generate-plan")
-    def generate_plan(self, request: str, client_context: dict, file_summaries: list = None, website_content: str = None) -> Dict[str, Any]:
+    def generate_plan(self, request: str, client_context: dict, client_priority: str = None, request_category: str = None, file_summaries: list = None, website_content: str = None) -> Dict[str, Any]:
         context_str = str(client_context)
 
         # Format website content if available
@@ -49,6 +51,8 @@ class ArchitectAgent:
         chat_prompt = self.prompt_manager.compile_to_langchain(prompt, {
             "request": request,
             "client_context": context_str,
+            "client_priority": client_priority or "not specified",
+            "request_category": request_category or "unclear",
             "file_context": file_context,
             "website_context": website_context,
         })

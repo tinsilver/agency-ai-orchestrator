@@ -7,6 +7,8 @@ class AgentState(TypedDict):
     """
     client_id: str
     raw_request: str
+    client_priority: str
+    client_category: str
     client_context: Optional[Dict[str, Any]]  # Data from ClickUp (tech stack, brand)
     attached_files: Optional[List[str]]       # List of Google Drive file IDs
     file_summaries: Optional[List[Dict[str, Any]]]  # Extracted file content and metadata
@@ -28,5 +30,7 @@ class WebhookPayload(BaseModel):
     Input schema for the FastAPI webhook.
     """
     client_id: str = Field(..., description="Unique ID of the client (domain name)")
+    client_priority: str = Field(..., description="Priority of the request")
+    client_category: str = Field(..., description="Category of the request")
     request_text: str = Field(..., description="Natural language change request")
     attached_files: Optional[List[str]] = Field(default=None, description="Google Drive file IDs for attachments")

@@ -1,3 +1,8 @@
+from dotenv import load_dotenv
+
+# Load environment variables first (for local dev; Railway provides them automatically)
+load_dotenv()
+
 from fastapi import FastAPI, HTTPException, BackgroundTasks
 from contextlib import asynccontextmanager
 from app.graph import app_graph
@@ -33,6 +38,8 @@ async def handle_webhook(payload: WebhookPayload, background_tasks: BackgroundTa
     input_state = {
         "client_id": payload.client_id,
         "raw_request": payload.request_text,
+        "client_priority": payload.client_priority,
+        "client_category": payload.client_category,
         "attached_files": payload.attached_files,
         "history": [],
         "iterations": 0

@@ -1,4 +1,4 @@
-from typing import Literal
+from typing import Literal, Optional
 import os
 import requests
 from langgraph.graph import StateGraph, END
@@ -35,6 +35,25 @@ validator = LightweightValidator()
 SITE_PARAMETERS_LIST_ID = "901520311911"
 DINESH_UPWORK_LIST_ID = "901520311855"
 THEO_LIST_ID = "901520364480"
+
+def map_priority_to_clickup(priority_str: str) -> Optional[int]:
+    """
+    Map semantic priority strings to ClickUp API integer values.
+
+    ClickUp API:
+    - 1 = urgent
+    - 2 = high
+    - 3 = normal
+    - 4 = low
+    - None = no priority set
+    """
+    mapping = {
+        "urgent": 1,
+        "high": 2,
+        "normal": 3,
+        "low": 4,
+    }
+    return mapping.get(priority_str.lower()) if priority_str else None
 
 @observe(name="enrichment-node")
 async def enrichment_node(state: AgentState):
@@ -129,12 +148,19 @@ def validate_request_node(state: AgentState):
     """Classify the request and check completeness."""
     request = state["raw_request"]
     context = state.get("client_context", {})
+    client_category = state.get("client_category")
     file_summaries = state.get("file_summaries", [])
     website_content = state.get("website_content")
     logs = state.get("logs", {})
     history = state.get("history", [])
 
-    result = request_validator.validate_and_classify(request, context, file_summaries, website_content)
+    result = request_validator.validate_and_classify(
+        request,
+        context,
+        client_category=client_category,
+        file_summaries=file_summaries,
+        website_content=website_content
+    )
     validator.report_usage(result["usage"], result["model"])
 
     classification = result["content"]
@@ -245,17 +271,26 @@ def architect_node(state: AgentState):
     """Generate the technical plan."""
     request = state["raw_request"]
     context = state.get("client_context", {})
+    client_priority = state.get("client_priority")
+    request_category = state.get("request_category")
     file_summaries = state.get("file_summaries", [])
     website_content = state.get("website_content")
     logs = state.get("logs", {})
-    
+
     # Check if we have critique from previous turn to add to context
     full_prompt_input = request
     if state.get("critique"):
         full_prompt_input += f"\n\nPREVIOUS REVIEW CRITIQUE (Fix this): {state['critique']}"
 
     # Agent now returns Dict with content, model, usage
-    result = architect_agent.generate_plan(full_prompt_input, context, file_summaries, website_content)
+    result = architect_agent.generate_plan(
+        full_prompt_input,
+        context,
+        client_priority=client_priority,
+        request_category=request_category,
+        file_summaries=file_summaries,
+        website_content=website_content
+    )
     validator.report_usage(result["usage"], result["model"])
 
     # Update logs
@@ -326,6 +361,8 @@ async def clickup_push_node(state: AgentState):
         description = plan_data.get("description_markdown", "")
         tags = plan_data.get("tags", [])
         checklist_items = plan_data.get("checklist", [])
+        priority_str = plan_data.get("priority")
+        priority_reasoning = plan_data.get("priority_reasoning")
     else:
         # Fallback for string
         lines = str(plan_data).split("\n")
@@ -333,6 +370,15 @@ async def clickup_push_node(state: AgentState):
         description = str(plan_data)
         tags = ["agency-ai", "automated"]
         checklist_items = []
+        priority_str = None
+        priority_reasoning = None
+
+    # Map priority to ClickUp API format
+    priority = map_priority_to_clickup(priority_str) if priority_str else None
+
+    # Add priority context to description if reasoning exists
+    if priority_reasoning:
+        description = f"{description}\n\n---\n\n**Priority Decision**: {priority_str}\n*{priority_reasoning}*"
 
     # Prefix title with Client ID for clarity if not present
     client_prefix = f"[{state['client_id']}] "
@@ -348,7 +394,8 @@ async def clickup_push_node(state: AgentState):
         list_id=list_id,
         name=title,
         description=description,
-        tags=tags
+        tags=tags,
+        priority=priority
     )
     
     task_id = result.get("id")
@@ -399,7 +446,10 @@ async def clickup_push_node(state: AgentState):
             "name": title,
             "description": description,
             "tags": tags,
-            "checklist": checklist_items
+            "checklist": checklist_items,
+            "priority": priority,
+            "priority_string": priority_str,
+            "priority_reasoning": priority_reasoning
         },
         "debug_is_structured": is_struct
     }

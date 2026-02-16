@@ -79,7 +79,7 @@ class ClickUpService:
                 return None
 
     @observe(name="clickup-create-task")
-    async def create_task(self, list_id: str, name: str, description: str, tags: List[str] = []) -> Dict[str, Any]:
+    async def create_task(self, list_id: str, name: str, description: str, tags: List[str] = [], priority: Optional[int] = None) -> Dict[str, Any]:
         """
         Create a task in a specific ClickUp List.
         """
@@ -93,6 +93,9 @@ class ClickUpService:
             "markdown_content": description,
             "tags": tags
         }
+
+        if priority is not None:
+            payload["priority"] = priority
 
         async with httpx.AsyncClient() as client:
             try:
@@ -134,21 +137,59 @@ class ClickUpService:
              return {"id": "mock-attachment-id", "url": "http://mock-attachment-url"}
 
         url = f"{self.api_url}/task/{task_id}/attachment"
-        
+
+        # Sanitize filename for ClickUp API compatibility
+        # 1. Remove non-ASCII characters (ClickUp API can be sensitive to Unicode)
+        # 2. Replace spaces and special chars with underscores
+        import re
+        # First, try to keep ASCII characters only
+        ascii_filename = filename.encode('ascii', 'ignore').decode('ascii')
+        # If filename becomes empty or loses extension, preserve original extension
+        if not ascii_filename or '.' not in ascii_filename:
+            ext = filename.split('.')[-1] if '.' in filename else 'bin'
+            ascii_filename = f"attachment_{task_id[-6:]}.{ext}"
+        # Then replace problematic characters with underscores (keep alphanumeric, dots, hyphens, underscores)
+        safe_filename = re.sub(r'[^\w\.-]', '_', ascii_filename)
+
+        # Ensure content_type is set for images if not provided
+        if not content_type and filename:
+            lower_name = filename.lower()
+            if lower_name.endswith(('.jpg', '.jpeg')):
+                content_type = 'image/jpeg'
+            elif lower_name.endswith('.png'):
+                content_type = 'image/png'
+            elif lower_name.endswith('.gif'):
+                content_type = 'image/gif'
+            elif lower_name.endswith('.pdf'):
+                content_type = 'application/pdf'
+            else:
+                content_type = 'application/octet-stream'
+
         # Files dict for httpx
         files = {
-            "attachment": (filename, file_content, content_type)
+            "attachment": (safe_filename, file_content, content_type)
         }
-        
+
         # Headers for attachment upload (do not set Content-Type, httpx handles it)
         # However, we must pass the Authorization token
         headers = {"Authorization": self.api_key}
 
-        async with httpx.AsyncClient() as client:
+        # Log attachment details for debugging
+        file_size_mb = len(file_content) / (1024 * 1024)
+        print(f"Uploading attachment: {filename} → {safe_filename} ({file_size_mb:.2f} MB, {content_type})")
+
+        # Use longer timeout for large files
+        async with httpx.AsyncClient(timeout=60.0) as client:
             try:
                 response = await client.post(url, headers=headers, files=files)
                 response.raise_for_status()
+                print(f"Successfully uploaded: {safe_filename}")
                 return response.json()
+            except httpx.HTTPStatusError as e:
+                # Capture the full error response from ClickUp
+                error_body = e.response.text if hasattr(e.response, 'text') else str(e)
+                print(f"Error uploading attachment {filename} (sanitized: {safe_filename}, {file_size_mb:.2f} MB): {e.response.status_code} - {error_body}")
+                return {"error": f"HTTP {e.response.status_code}: {error_body}"}
             except Exception as e:
                 print(f"Error uploading attachment {filename}: {e}")
                 return {"error": str(e)}

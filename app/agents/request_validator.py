@@ -28,6 +28,7 @@ class RequestValidatorAgent:
         self,
         request: str,
         client_context: dict,
+        client_category: str = None,
         file_summaries: list = None,
         website_content: str = None,
     ) -> Dict[str, Any]:
@@ -43,6 +44,7 @@ class RequestValidatorAgent:
         compiled = prompt.compile(
             request=request,
             client_context=context_str,
+            client_category=client_category or "not specified",
             file_context=file_context if file_context else "No files attached.",
             website_context=website_context if website_context else "No website data available.",
         )
