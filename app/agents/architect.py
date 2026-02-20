@@ -20,13 +20,27 @@ class ArchitectAgent:
         self.prompt_manager = PromptManager()
 
     @observe(name="architect-generate-plan")
-    def generate_plan(self, request: str, client_context: dict, client_priority: str = None, request_category: str = None, file_summaries: list = None, website_content: str = None) -> Dict[str, Any]:
+    def generate_plan(self, request: str, client_context: dict, client_priority: str = None, request_category: str = None, file_summaries: list = None, website_content: str = None, dynamic_context: dict = None) -> Dict[str, Any]:
         context_str = str(client_context)
 
         # Format website content if available
         website_context = ""
         if website_content:
              website_context = f"\n\n## 🌐 Existing Website Context\nUse this information to respect the current layout and structure:\n\n{website_content}\n"
+
+        # Format dynamic enrichment context if available
+        enrichment_context = ""
+        if dynamic_context:
+            enrichment_context = "\n\n## 🔍 Additional Context from Enrichment\nThe following information was discovered through automated research:\n\n"
+            for key, value in dynamic_context.items():
+                if isinstance(value, dict):
+                    answer = value.get("answer", value)
+                    source = value.get("source", "unknown")
+                    confidence = value.get("confidence", 0)
+                    enrichment_context += f"- **{key.replace('_', ' ').title()}**: {answer} _(source: {source}, confidence: {confidence:.2f})_\n"
+                else:
+                    enrichment_context += f"- **{key.replace('_', ' ').title()}**: {value}\n"
+            enrichment_context += "\nUse this enriched context to inform your technical plan where relevant.\n"
 
         # Format file content if available
         file_context = ""
@@ -55,6 +69,7 @@ class ArchitectAgent:
             "request_category": request_category or "unclear",
             "file_context": file_context,
             "website_context": website_context,
+            "enrichment_context": enrichment_context,  # NEW
         })
 
         chain = chat_prompt | self.structured_llm

@@ -25,6 +25,16 @@ class AgentState(TypedDict):
     history: List[str]                        # Audit log of actions
     logs: Dict[str, Any]                      # Structured logs (tokens, models, timing)
 
+    # Enrichment tracking (for recursive validation)
+    enrichment_iteration: int                 # 0-3, tracks enrichment loop count
+    enrichment_history: Optional[List[Dict[str, Any]]]  # History of enrichment attempts
+    dynamic_context: Optional[Dict[str, Any]]            # Context gathered by tools
+    tool_usage_stats: Optional[Dict[str, Any]]           # Track tool calls per type
+    total_enrichment_tokens: int              # Running token count for enrichment
+    max_enrichment_tokens: int                # Token budget (default 500K)
+    enrichment_complete: Optional[bool]       # True if enrichment succeeded/exhausted
+    enrichment_stop_reason: Optional[str]     # "complete"|"max_iterations"|"no_progress"|"token_limit"
+
 class WebhookPayload(BaseModel):
     """
     Input schema for the FastAPI webhook.

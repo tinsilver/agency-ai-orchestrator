@@ -10,6 +10,7 @@ from app.services.web_scraper import WebScraperService
 from app.agents.architect import ArchitectAgent
 from app.agents.review import ReviewAgent
 from app.agents.request_validator import RequestValidatorAgent
+from app.agents.dynamic_enrichment import DynamicEnrichmentAgent
 from app.domain.evaluator import LightweightValidator
 
 # File processing service (use mock if no Google Drive credentials)
@@ -27,6 +28,7 @@ web_scraper = WebScraperService()
 architect_agent = ArchitectAgent()
 review_agent = ReviewAgent()
 request_validator = RequestValidatorAgent()
+enrichment_agent = DynamicEnrichmentAgent()
 validator = LightweightValidator()
 
 # --- Node Definitions ---
@@ -55,9 +57,9 @@ def map_priority_to_clickup(priority_str: str) -> Optional[int]:
     }
     return mapping.get(priority_str.lower()) if priority_str else None
 
-@observe(name="enrichment-node")
-async def enrichment_node(state: AgentState):
-    """Fetch client data from ClickUp Task and scrape website."""
+@observe(name="static-enrichment-node")
+async def static_enrichment_node(state: AgentState):
+    """Fetch client data from ClickUp Task and scrape website (static enrichment)."""
     client_name = state["client_id"] # Matches "Client ID" from form, e.g. domain name
     history = state.get("history", [])
     website_content = None
@@ -189,6 +191,109 @@ def validate_request_node(state: AgentState):
     }
 
 
+@observe(name="dynamic-enrichment-node")
+async def dynamic_enrichment_node(state: AgentState):
+    """Attempt to gather missing information using tools."""
+    missing_info = state.get("missing_information", [])
+    raw_request = state["raw_request"]
+    client_context = state.get("client_context", {})
+    website_content = state.get("website_content")
+    tool_usage_stats = state.get("tool_usage_stats", {})
+    enrichment_history = state.get("enrichment_history", [])
+    enrichment_iteration = state.get("enrichment_iteration", 0)
+    total_tokens = state.get("total_enrichment_tokens", 0)
+    max_tokens = state.get("max_enrichment_tokens", 500000)
+    history = state.get("history", [])
+    logs = state.get("logs", {})
+
+    # Check token budget
+    if total_tokens >= max_tokens:
+        history.append(f"⚠️ Enrichment stopped: token budget exceeded ({total_tokens}/{max_tokens})")
+        return {
+            "enrichment_complete": True,
+            "enrichment_stop_reason": "token_limit",
+            "history": history
+        }
+
+    # Increment iteration counter
+    new_iteration = enrichment_iteration + 1
+    history.append(f"🔍 Starting enrichment iteration {new_iteration}/3...")
+
+    # Extract website URL from client context or state
+    website_url = client_context.get("Website URL") or state.get("client_id")
+    if website_url and not website_url.startswith(('http://', 'https://')):
+        website_url = f"https://{website_url}"
+
+    # Gather context using tools
+    result = await enrichment_agent.gather_context(
+        missing_information=missing_info,
+        raw_request=raw_request,
+        static_context=client_context,
+        website_url=website_url,
+        website_content=website_content,
+        tool_usage_stats=tool_usage_stats,
+        previous_findings=enrichment_history[-1] if enrichment_history else None
+    )
+
+    # Convert gathered info to dynamic context
+    dynamic_context = state.get("dynamic_context", {})
+    for info in result.gathered_info:
+        if info.answer:
+            key = info.question.lower().replace(" ", "_").replace("?", "")
+            dynamic_context[key] = {
+                "answer": info.answer,
+                "source": info.source,
+                "confidence": info.confidence
+            }
+
+    # Update token tracking
+    new_total_tokens = total_tokens + result.tokens_used
+
+    # Add to enrichment history
+    iteration_record = {
+        "iteration": new_iteration,
+        "questions_attempted": missing_info,
+        "tools_used": result.tools_used,
+        "information_found": {info.question: info.answer for info in result.gathered_info if info.answer},
+        "confidence": result.confidence,
+        "tokens_used": result.tokens_used,
+        "questions_resolved": result.questions_answered,
+        "errors": result.errors
+    }
+    enrichment_history.append(iteration_record)
+
+    # Log results
+    history.append(
+        f"✓ Iteration {new_iteration} complete: "
+        f"{result.questions_answered}/{result.questions_total} questions answered, "
+        f"confidence={result.confidence:.2f}"
+    )
+
+    if result.errors:
+        history.append(f"⚠️ Errors: {', '.join(result.errors)}")
+
+    # Store enrichment results in logs
+    logs["enrichment"] = {
+        "iterations": len(enrichment_history),
+        "total_tokens": new_total_tokens,
+        "latest_result": {
+            "tools_used": result.tools_used,
+            "questions_answered": result.questions_answered,
+            "confidence": result.confidence
+        }
+    }
+
+    return {
+        "enrichment_iteration": new_iteration,
+        "enrichment_history": enrichment_history,
+        "dynamic_context": dynamic_context,
+        "tool_usage_stats": tool_usage_stats,
+        "total_enrichment_tokens": new_total_tokens,
+        "history": history,
+        "logs": logs
+    }
+
+
 @observe(name="create-admin-task-node")
 async def create_admin_task_node(state: AgentState):
     """Create a clarification task in Theo's ClickUp list for incomplete requests."""
@@ -200,6 +305,27 @@ async def create_admin_task_node(state: AgentState):
     client_priority = state.get("client_priority")
     logs = state.get("logs", {})
     history = state.get("history", [])
+
+    # Determine why we got here (stop reason)
+    enrichment_iteration = state.get("enrichment_iteration", 0)
+    total_tokens = state.get("total_enrichment_tokens", 0)
+    max_tokens = state.get("max_enrichment_tokens", 500_000)
+
+    stop_reason = None
+    if enrichment_iteration >= 3:
+        stop_reason = "max_iterations"
+    elif total_tokens >= max_tokens:
+        stop_reason = "token_limit"
+    elif enrichment_iteration > 0:
+        # Check for no progress
+        enrichment_history = state.get("enrichment_history", [])
+        if enrichment_history:
+            last_iter = enrichment_history[-1]
+            if last_iter.get("questions_resolved", 0) == 0:
+                stop_reason = "no_progress"
+
+    if stop_reason is None:
+        stop_reason = "validation_failed"
 
     # Build markdown description
     missing_md = "\n".join(f"- {item}" for item in missing) if missing else "- No specific items identified"
@@ -287,6 +413,8 @@ async def create_admin_task_node(state: AgentState):
         "admin_task_id": task_url,
         "logs": logs,
         "history": history,
+        "enrichment_complete": True,
+        "enrichment_stop_reason": stop_reason,
     }
 
 
@@ -299,6 +427,7 @@ def architect_node(state: AgentState):
     request_category = state.get("request_category")
     file_summaries = state.get("file_summaries", [])
     website_content = state.get("website_content")
+    dynamic_context = state.get("dynamic_context")  # NEW: Enriched context
     logs = state.get("logs", {})
 
     # Check if we have critique from previous turn to add to context
@@ -313,7 +442,8 @@ def architect_node(state: AgentState):
         client_priority=client_priority,
         request_category=request_category,
         file_summaries=file_summaries,
-        website_content=website_content
+        website_content=website_content,
+        dynamic_context=dynamic_context  # NEW: Pass enriched context
     )
     validator.report_usage(result["usage"], result["model"])
 
@@ -524,6 +654,41 @@ def route_after_validation(state: AgentState) -> Literal["architect", "create_ad
     return "architect"
 
 
+def route_after_validation_with_enrichment(state: AgentState) -> Literal["dynamic_enrichment", "architect", "create_admin_task"]:
+    """Enhanced routing with enrichment support."""
+
+    # Check if request is complete
+    if state.get("is_request_complete"):
+        return "architect"
+
+    # Check if we've reached max enrichment iterations
+    enrichment_iter = state.get("enrichment_iteration", 0)
+    if enrichment_iter >= 3:
+        return "create_admin_task"
+
+    # Check token budget
+    total_tokens = state.get("total_enrichment_tokens", 0)
+    max_tokens = state.get("max_enrichment_tokens", 500000)
+    if total_tokens >= max_tokens:
+        return "create_admin_task"
+
+    # Check for no progress (same questions remain)
+    if enrichment_iter > 0:
+        current_missing = set(state.get("missing_information", []))
+        history = state.get("enrichment_history", [])
+        if history:
+            last_iteration = history[-1]
+            previous_missing = set(last_iteration.get("questions_attempted", []))
+            questions_answered = last_iteration.get("questions_resolved", 0)
+
+            # If same questions and no answers found, stop
+            if current_missing == previous_missing and questions_answered == 0:
+                return "create_admin_task"
+
+    # Continue enrichment
+    return "dynamic_enrichment"
+
+
 def should_continue(state: AgentState) -> Literal["architect", "push_to_clickup", "create_admin_task"]:
     if state.get("critique") and state["iterations"] < 3:
         return "architect"
@@ -536,27 +701,33 @@ def should_continue(state: AgentState) -> Literal["architect", "push_to_clickup"
 
 workflow = StateGraph(AgentState)
 
-workflow.add_node("enrichment", enrichment_node)
+workflow.add_node("static_enrichment", static_enrichment_node)
 workflow.add_node("file_processing", file_processing_node)
 workflow.add_node("validate_request", validate_request_node)
+workflow.add_node("dynamic_enrichment", dynamic_enrichment_node)  # NEW
 workflow.add_node("create_admin_task", create_admin_task_node)
 workflow.add_node("architect", architect_node)
 workflow.add_node("qa_reviewer", qa_reviewer_node)
 workflow.add_node("push_to_clickup", clickup_push_node)
 workflow.add_node("emit_to_n8n", emit_to_n8n)
 
-workflow.set_entry_point("enrichment")
-workflow.add_edge("enrichment", "file_processing")
+workflow.set_entry_point("static_enrichment")
+workflow.add_edge("static_enrichment", "file_processing")
 workflow.add_edge("file_processing", "validate_request")
 
+# Enhanced validation routing with enrichment support
 workflow.add_conditional_edges(
     "validate_request",
-    route_after_validation,
+    route_after_validation_with_enrichment,  # NEW routing function
     {
+        "dynamic_enrichment": "dynamic_enrichment",  # NEW route
         "architect": "architect",
         "create_admin_task": "create_admin_task",
     }
 )
+
+# Loop back from enrichment to validation
+workflow.add_edge("dynamic_enrichment", "validate_request")  # NEW loop
 
 workflow.add_edge("architect", "qa_reviewer")
 

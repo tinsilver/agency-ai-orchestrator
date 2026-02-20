@@ -1,0 +1,8 @@
+[phases.setup]
+nixPkgs = ["python310", "curl"]
+
+[phases.build]
+cmds = [
+  "pip install -r requirements.txt",
+  "curl -L https://github.com/squirrelscan/squirrelscan/releases/download/v0.1.0/squirrelscan_linux_amd64.tar.gz | tar -xz -C /usr/local/bin/"
+]

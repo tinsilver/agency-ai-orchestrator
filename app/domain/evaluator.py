@@ -73,3 +73,101 @@ class LightweightValidator:
             )
 
         return scores
+
+    def report_enrichment_metrics(self, state: Dict) -> Dict[str, float]:
+        """
+        Report enrichment-specific metrics to Langfuse trace.
+
+        Args:
+            state: AgentState dict containing enrichment tracking fields
+
+        Returns:
+            Dict of metric names to values
+        """
+        enrichment_history = state.get("enrichment_history", [])
+        tool_usage_stats = state.get("tool_usage_stats", {})
+        missing_information = state.get("missing_information", [])
+
+        metrics = {}
+
+        # Enrichment performance metrics
+        metrics["enrichment_iterations"] = len(enrichment_history)
+        metrics["enrichment_success"] = 1.0 if state.get("enrichment_complete") else 0.0
+        metrics["enrichment_total_tokens"] = state.get("total_enrichment_tokens", 0)
+
+        # Calculate total enrichment cost
+        total_cost = 0.0
+        for iteration in enrichment_history:
+            tokens = iteration.get("tokens_used", 0)
+            rates = PRICING["claude-haiku-4-5-20251001"]
+            # Assume 50/50 split of input/output for estimation
+            total_cost += (tokens * 0.5 * rates["input"]) + (tokens * 0.5 * rates["output"])
+        metrics["enrichment_cost_usd"] = round(total_cost, 6)
+
+        # Information quality metrics
+        questions_initially_missing = len(missing_information) if missing_information else 0
+        questions_answered = 0
+        for iteration in enrichment_history:
+            questions_answered += iteration.get("questions_resolved", 0)
+
+        metrics["questions_initially_missing"] = questions_initially_missing
+        metrics["questions_answered_by_enrichment"] = questions_answered
+
+        if questions_initially_missing > 0:
+            metrics["enrichment_answer_rate"] = round(questions_answered / questions_initially_missing, 2)
+        else:
+            metrics["enrichment_answer_rate"] = 0.0
+
+        # Final confidence score
+        if enrichment_history:
+            last_iteration = enrichment_history[-1]
+            metrics["final_enrichment_confidence"] = last_iteration.get("confidence", 0.0)
+
+        # Tool usage metrics
+        for tool_name, stats in tool_usage_stats.items():
+            metrics[f"tool_{tool_name}_calls"] = stats.get("calls", 0)
+
+        # Report all metrics to Langfuse
+        # Numeric metrics
+        numeric_metrics = [
+            "enrichment_iterations",
+            "enrichment_total_tokens",
+            "enrichment_cost_usd",
+            "questions_initially_missing",
+            "questions_answered_by_enrichment",
+            "enrichment_answer_rate",
+            "final_enrichment_confidence",
+        ]
+        for name in numeric_metrics:
+            if name in metrics:
+                self.langfuse.score_current_trace(
+                    name=name,
+                    value=metrics[name],
+                    data_type="NUMERIC",
+                )
+
+        # Tool usage metrics
+        for name, value in metrics.items():
+            if name.startswith("tool_") and name.endswith("_calls"):
+                self.langfuse.score_current_trace(
+                    name=name,
+                    value=value,
+                    data_type="NUMERIC",
+                )
+
+        # Boolean metrics
+        self.langfuse.score_current_trace(
+            name="enrichment_success",
+            value=metrics["enrichment_success"],
+            data_type="BOOLEAN",
+        )
+
+        # Categorical metric: stop reason
+        if state.get("enrichment_stop_reason"):
+            self.langfuse.score_current_trace(
+                name="enrichment_stop_reason",
+                value=state["enrichment_stop_reason"],
+                data_type="CATEGORICAL",
+            )
+
+        return metrics
