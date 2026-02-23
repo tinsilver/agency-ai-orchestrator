@@ -95,7 +95,12 @@ async def static_enrichment_node(state: AgentState):
     # 2. Website Scraping
     # If client_id looks like a domain, try to scrape it
     if "." in client_name and not " " in client_name:
-        scrape_result = await web_scraper.scrape_url(client_name)
+        # Normalize URL: add https:// if missing protocol
+        normalized_url = client_name
+        if not normalized_url.startswith(('http://', 'https://')):
+            normalized_url = f"https://{normalized_url}"
+
+        scrape_result = await web_scraper.scrape_url(normalized_url)
         if not scrape_result.get("error"):
             website_content = (
                 f"Page Title: {scrape_result['title']}\n"
