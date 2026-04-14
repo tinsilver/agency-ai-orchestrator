@@ -9,7 +9,6 @@ from app.graph import app_graph
 from app.state import WebhookPayload
 from app.utils import sanitize_domain
 from langfuse import observe, get_client
-from langfuse.decorators import langfuse_context
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -34,7 +33,7 @@ async def handle_webhook(payload: WebhookPayload, background_tasks: BackgroundTa
     # Handles: "https://google.co.uk" → "google.co.uk", "www.example.com/" → "example.com"
     clean_client_id = sanitize_domain(payload.client_id)
 
-    langfuse_context.update_current_trace(
+    get_client().update_current_trace(
         session_id=f"webhook-{clean_client_id}",
         user_id=clean_client_id,
         tags=["webhook", "production"],

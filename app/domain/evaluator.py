@@ -1,6 +1,6 @@
 import re
 from typing import Dict, Optional
-from langfuse.decorators import langfuse_context
+from langfuse import get_client
 
 # Claude Haiku 4.5 pricing (USD per token)
 PRICING = {
@@ -12,7 +12,7 @@ class LightweightValidator:
     """Quick sanity checks that run on every request. Reports scores to Langfuse."""
 
     def __init__(self):
-        pass
+        self.langfuse = get_client()
 
     def validate(self, request_text: str, plan: Optional[str] = None) -> Dict[str, float]:
         """Run non-LLM checks and report scores to the current Langfuse trace."""
@@ -41,7 +41,7 @@ class LightweightValidator:
 
         # Send scores to current Langfuse trace
         for name, value in scores.items():
-            langfuse_context.score_current_trace(
+            self.langfuse.score_current_trace(
                 name=name,
                 value=value,
                 data_type="BOOLEAN",
@@ -66,7 +66,7 @@ class LightweightValidator:
         }
 
         for name, value in scores.items():
-            langfuse_context.score_current_trace(
+            self.langfuse.score_current_trace(
                 name=name,
                 value=value,
                 data_type="NUMERIC",
@@ -140,7 +140,7 @@ class LightweightValidator:
         ]
         for name in numeric_metrics:
             if name in metrics:
-                langfuse_context.score_current_trace(
+                self.langfuse.score_current_trace(
                     name=name,
                     value=metrics[name],
                     data_type="NUMERIC",
@@ -149,14 +149,14 @@ class LightweightValidator:
         # Tool usage metrics
         for name, value in metrics.items():
             if name.startswith("tool_") and name.endswith("_calls"):
-                langfuse_context.score_current_trace(
+                self.langfuse.score_current_trace(
                     name=name,
                     value=value,
                     data_type="NUMERIC",
                 )
 
         # Boolean metrics
-        langfuse_context.score_current_trace(
+        self.langfuse.score_current_trace(
             name="enrichment_success",
             value=metrics["enrichment_success"],
             data_type="BOOLEAN",
@@ -164,7 +164,7 @@ class LightweightValidator:
 
         # Categorical metric: stop reason
         if state.get("enrichment_stop_reason"):
-            langfuse_context.score_current_trace(
+            self.langfuse.score_current_trace(
                 name="enrichment_stop_reason",
                 value=state["enrichment_stop_reason"],
                 data_type="CATEGORICAL",
