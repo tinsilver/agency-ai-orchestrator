@@ -7,3 +7,5 @@ __pycache__/
 .DS_Store
 workflow_log_*.json
 .secrets/
+reports/
+Offline Assets/

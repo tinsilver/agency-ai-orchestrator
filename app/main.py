@@ -51,7 +51,7 @@ async def handle_webhook(payload: WebhookPayload, background_tasks: BackgroundTa
         # Enrichment tracking (initialize with defaults)
         "enrichment_iteration": 0,
         "total_enrichment_tokens": 0,
-        "max_enrichment_tokens": 500000  # 500K token budget
+        "max_enrichment_tokens": 400000  # 400K token budget
     }
 
     try:

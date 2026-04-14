@@ -34,9 +34,14 @@ validator = LightweightValidator()
 # --- Node Definitions ---
 
 # List IDs from discovery
-SITE_PARAMETERS_LIST_ID = "901520311911"
-DINESH_UPWORK_LIST_ID = "901520311855"
-THEO_LIST_ID = "901520364480"
+# SITE_PARAMETERS_LIST_ID = "901520311911"
+# DINESH_UPWORK_LIST_ID = "901520311855"
+# THEO_LIST_ID = "901520364480"
+
+CLICKUP_CLIENT_CONFIGURATION_ID = os.getenv("CLICKUP_CLIENT_CONFIGURATION_ID")
+CLICKUP_NEW_REQUESTS_ID = os.getenv("CLICKUP_NEW_REQUESTS_ID")
+CLICKUP_DEVELOPER_ID = int(os.getenv("CLICKUP_DEVELOPER_ID")) if os.getenv("CLICKUP_DEVELOPER_ID") else None
+CLICKUP_ADMIN_ID = int(os.getenv("CLICKUP_ADMIN_ID")) if os.getenv("CLICKUP_ADMIN_ID") else None
 
 def map_priority_to_clickup(priority_str: str) -> Optional[int]:
     """
@@ -66,7 +71,7 @@ async def static_enrichment_node(state: AgentState):
     
     # 1. ClickUp Enrichment
     # Find the task in "Site Parameters" list that matches the client name
-    tasks = await clickup_service.get_tasks(SITE_PARAMETERS_LIST_ID)
+    tasks = await clickup_service.get_tasks(CLICKUP_CLIENT_CONFIGURATION_ID)
     target_task = next((t for t in tasks if t["name"] == client_name), None)
     
     context = {}
@@ -301,7 +306,7 @@ async def dynamic_enrichment_node(state: AgentState):
 
 @observe(name="create-admin-task-node")
 async def create_admin_task_node(state: AgentState):
-    """Create a clarification task in Theo's ClickUp list for incomplete requests."""
+    """Create a clarification task in New Requests list for incomplete requests."""
     client_id = state["client_id"]
     request = state["raw_request"]
     category = state.get("request_category", "unclear")
@@ -310,6 +315,9 @@ async def create_admin_task_node(state: AgentState):
     client_priority = state.get("client_priority")
     logs = state.get("logs", {})
     history = state.get("history", [])
+
+    # Assign to Theo
+    assignees = [CLICKUP_ADMIN_ID]
 
     # Determine why we got here (stop reason)
     enrichment_iteration = state.get("enrichment_iteration", 0)
@@ -357,11 +365,13 @@ async def create_admin_task_node(state: AgentState):
     priority = map_priority_to_clickup(priority_str)
 
     result = await clickup_service.create_task(
-        list_id=THEO_LIST_ID,
+        list_id=CLICKUP_NEW_REQUESTS_ID,
         name=title,
         description=description,
         tags=tags,
-        priority=priority
+        priority=priority,
+        assignees=assignees,
+        status="INCOMPLETE"
     )
 
     task_id = result.get("id")
@@ -387,7 +397,7 @@ async def create_admin_task_node(state: AgentState):
             filename = meta.get("name", "unknown_file")
             mime_type = meta.get("mimeType")
 
-            content = await drive_service.download_file(file_id)
+            content = await drive_service.download_file(file_id, mime_type)
             if content:
                 att_res = await clickup_service.create_task_attachment(
                     task_id, content, filename, mime_type
@@ -508,13 +518,16 @@ def qa_reviewer_node(state: AgentState):
 @observe(name="clickup-push-node")
 async def clickup_push_node(state: AgentState):
     """Push to ClickUp."""
-    # Push to specific list: Dinesh - Upwork
-    list_id = DINESH_UPWORK_LIST_ID
+    # Push to specific list: New Requests
+    list_id = CLICKUP_NEW_REQUESTS_ID
     logs = state.get("logs", {})
     
     plan_data = state.get("task_md", {})
     is_struct = isinstance(plan_data, dict)
     
+    # Assign to developer
+    assignees = [CLICKUP_DEVELOPER_ID]
+
     if is_struct:
         title = plan_data.get("task_name", f"Feature: {state['client_id']}")
         description = plan_data.get("description_markdown", "")
@@ -554,7 +567,8 @@ async def clickup_push_node(state: AgentState):
         name=title,
         description=description,
         tags=tags,
-        priority=priority
+        priority=priority,
+        assignees=assignees
     )
     
     task_id = result.get("id")
@@ -580,9 +594,9 @@ async def clickup_push_node(state: AgentState):
                 
             filename = meta.get("name", "unknown_file")
             mime_type = meta.get("mimeType")
-            
+
             # Download content
-            content = await drive_service.download_file(file_id)
+            content = await drive_service.download_file(file_id, mime_type)
             if content:
                 print(f"Uploading attachment {filename} to ClickUp task {task_id}...")
                 att_res = await clickup_service.create_task_attachment(
@@ -709,7 +723,7 @@ workflow = StateGraph(AgentState)
 workflow.add_node("static_enrichment", static_enrichment_node)
 workflow.add_node("file_processing", file_processing_node)
 workflow.add_node("validate_request", validate_request_node)
-workflow.add_node("dynamic_enrichment", dynamic_enrichment_node)  # NEW
+workflow.add_node("dynamic_enrichment", dynamic_enrichment_node)
 workflow.add_node("create_admin_task", create_admin_task_node)
 workflow.add_node("architect", architect_node)
 workflow.add_node("qa_reviewer", qa_reviewer_node)
@@ -723,16 +737,16 @@ workflow.add_edge("file_processing", "validate_request")
 # Enhanced validation routing with enrichment support
 workflow.add_conditional_edges(
     "validate_request",
-    route_after_validation_with_enrichment,  # NEW routing function
+    route_after_validation_with_enrichment,
     {
-        "dynamic_enrichment": "dynamic_enrichment",  # NEW route
+        "dynamic_enrichment": "dynamic_enrichment",
         "architect": "architect",
         "create_admin_task": "create_admin_task",
     }
 )
 
 # Loop back from enrichment to validation
-workflow.add_edge("dynamic_enrichment", "validate_request")  # NEW loop
+workflow.add_edge("dynamic_enrichment", "validate_request")
 
 workflow.add_edge("architect", "qa_reviewer")
 

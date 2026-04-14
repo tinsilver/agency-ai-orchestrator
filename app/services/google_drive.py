@@ -44,20 +44,35 @@ class GoogleDriveService:
             print(f"Error getting file metadata for {file_id}: {e}")
             return None
     
-    async def download_file(self, file_id: str) -> Optional[bytes]:
-        """Download file content as bytes."""
+    # Google Workspace MIME types that require export instead of direct download
+    GOOGLE_EXPORT_TYPES = {
+        'application/vnd.google-apps.document': ('application/vnd.openxmlformats-officedocument.wordprocessingml.document', '.docx'),
+        'application/vnd.google-apps.spreadsheet': ('application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', '.xlsx'),
+        'application/vnd.google-apps.presentation': ('application/vnd.openxmlformats-officedocument.presentationml.presentation', '.pptx'),
+    }
+
+    async def download_file(self, file_id: str, mime_type: str = None) -> Optional[bytes]:
+        """Download file content as bytes. Exports Google Workspace files automatically."""
         if not self.service:
             return None
-            
+
         try:
-            request = self.service.files().get_media(fileId=file_id)
+            # Determine if this is a Google Workspace file that needs export
+            export_info = self.GOOGLE_EXPORT_TYPES.get(mime_type) if mime_type else None
+
+            if export_info:
+                export_mime, _ = export_info
+                request = self.service.files().export_media(fileId=file_id, mimeType=export_mime)
+            else:
+                request = self.service.files().get_media(fileId=file_id)
+
             file_buffer = io.BytesIO()
             downloader = MediaIoBaseDownload(file_buffer, request)
-            
+
             done = False
             while not done:
                 status, done = downloader.next_chunk()
-            
+
             file_buffer.seek(0)
             return file_buffer.getvalue()
         except Exception as e:
@@ -121,23 +136,36 @@ class GoogleDriveService:
         }
         
         # Extract text for document types
-        if 'word' in mime_type or filename.endswith('.docx'):
-            file_bytes = await self.download_file(file_id)
+        is_google_doc = mime_type == 'application/vnd.google-apps.document'
+        is_word = 'word' in mime_type or filename.endswith('.docx') or is_google_doc
+        is_google_sheet = mime_type == 'application/vnd.google-apps.spreadsheet'
+
+        if is_word:
+            file_bytes = await self.download_file(file_id, mime_type)
             if file_bytes:
                 result["extracted_content"] = self.extract_text_from_docx(file_bytes)
                 result["type"] = "document"
-        
+                # Normalise the mime type so ClickUp upload works
+                if is_google_doc:
+                    result["mime_type"] = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+                    result["filename"] = filename + '.docx'
+
         elif 'pdf' in mime_type or filename.endswith('.pdf'):
-            file_bytes = await self.download_file(file_id)
+            file_bytes = await self.download_file(file_id, mime_type)
             if file_bytes:
                 result["extracted_content"] = self.extract_text_from_pdf(file_bytes)
                 result["type"] = "document"
-        
+
+        elif is_google_sheet:
+            file_bytes = await self.download_file(file_id, mime_type)
+            if file_bytes:
+                result["type"] = "spreadsheet"
+                result["mime_type"] = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+                result["filename"] = filename + '.xlsx'
+
         elif 'image' in mime_type:
-            # For images, we don't extract text here
-            # Could add Claude Vision API processing later
             result["type"] = "image"
-        
+
         else:
             result["type"] = "other"
         

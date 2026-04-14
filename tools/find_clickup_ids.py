@@ -13,8 +13,15 @@ async def find_ids():
     spaces = await service.get_spaces()
     
     targets = {
-        "Clients": {"found": False, "folders": ["Active"], "lists": ["Site Parameters"]},
-        "Virtual Assistants": {"found": False, "folders": ["Active"], "lists": ["Dinesh - Upwork"]}
+        "Operations": {
+            "found": False, 
+            "folderless_lists": ["Site Parameters", "Client Configurations", "New Requests"]
+        },
+        "Virtual Assistants": {
+            "found": False, 
+            "folders": ["Active"], 
+            "lists": ["Dinesh - Upwork"]
+        }
     }
     
     results = {}
@@ -27,26 +34,36 @@ async def find_ids():
             targets[name]["found"] = True
             print(f"  -> Found Target Space: {name}")
             
-            # Get Folders
-            folders = await service.get_folders(space['id'])
-            for folder in folders:
-                fname = folder['name']
-                print(f"  Folder: {fname} ({folder['id']})")
-                
-                if fname in targets[name]["folders"]:
-                    print(f"    -> Found Target Folder: {fname}")
-                    
-                    # Get Lists
-                    lists = await service.get_lists(folder['id'])
-                    for lst in lists:
-                        lname = lst['name']
-                        print(f"    List: {lname} ({lst['id']})")
-                        
-                        if lname in targets[name]["lists"]:
-                            print(f"      -> FOUND TARGET LIST: {lname} ID: {lst['id']}")
-                            results[lname] = lst['id']
+            # 1. Search Folderless Lists First
+            if "folderless_lists" in targets[name]:
+                space_lists = await service.get_space_lists(space['id'])
+                for slst in space_lists:
+                    slname = slst['name']
+                    print(f"  Space List: {slname} ({slst['id']})")
+                    if slname in targets[name]["folderless_lists"]:
+                        print(f"    -> FOUND TARGET LIST: {slname} ID: {slst['id']}")
+                        results[slname] = slst['id']
 
-            # Check for folderless lists if necessary (not common in this structure but possible)
+            # 2. Get Folders
+            if "folders" in targets[name]:
+                folders = await service.get_folders(space['id'])
+                for folder in folders:
+                    fname = folder['name']
+                    print(f"  Folder: {fname} ({folder['id']})")
+                    
+                    if fname in targets[name].get("folders", []):
+                        print(f"    -> Found Target Folder: {fname}")
+                        
+                        # Get Lists
+                        if "lists" in targets[name]:
+                            lists = await service.get_lists(folder['id'])
+                            for lst in lists:
+                                lname = lst['name']
+                                print(f"    List: {lname} ({lst['id']})")
+                                
+                                if lname in targets[name].get("lists", []):
+                                    print(f"      -> FOUND TARGET LIST: {lname} ID: {lst['id']}")
+                                    results[lname] = lst['id']
     
     print("\n--- RESULTS ---")
     print(results)

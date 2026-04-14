@@ -30,6 +30,12 @@ class ClickUpService:
         if not self.api_key: return []
         url = f"{self.api_url}/folder/{folder_id}/list"
         return await self._get_paginated(url, "lists")
+
+    async def get_space_lists(self, space_id: str) -> List[Dict[str, Any]]:
+        """Get all folderless lists in a space."""
+        if not self.api_key: return []
+        url = f"{self.api_url}/space/{space_id}/list"
+        return await self._get_paginated(url, "lists")
         
     @observe(name="clickup-get-tasks")
     async def get_tasks(self, list_id: str, include_closed: bool = False) -> List[Dict[str, Any]]:
@@ -62,8 +68,8 @@ class ClickUpService:
              return {
                  "name": "Test Client",
                  "custom_fields": [
-                     {"name": "Tech Stack", "value": "Python, React"},
-                     {"name": "Brand Guidelines", "value": "Dark Mode"}
+                     {"name": "Technical Notes", "value": "Wordpress, Elementor"},
+                     {"name": "Service Level", "value": "Gold"}
                  ]
              }
 
@@ -79,7 +85,7 @@ class ClickUpService:
                 return None
 
     @observe(name="clickup-create-task")
-    async def create_task(self, list_id: str, name: str, description: str, tags: List[str] = [], priority: Optional[int] = None) -> Dict[str, Any]:
+    async def create_task(self, list_id: str, name: str, description: str, tags: List[str] = [], priority: Optional[int] = None, assignees: List[str] = [], status: Optional[str] = None) -> Dict[str, Any]:
         """
         Create a task in a specific ClickUp List.
         """
@@ -96,6 +102,12 @@ class ClickUpService:
 
         if priority is not None:
             payload["priority"] = priority
+
+        if assignees:
+            payload["assignees"] = assignees
+
+        if status is not None:
+            payload["status"] = status
 
         async with httpx.AsyncClient() as client:
             try:
