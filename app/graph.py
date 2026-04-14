@@ -3,6 +3,7 @@ import os
 import requests
 from langgraph.graph import StateGraph, END
 from langfuse import observe, get_client
+from langfuse.decorators import langfuse_context
 
 from app.state import AgentState
 from app.services.clickup import ClickUpService
@@ -422,7 +423,7 @@ async def create_admin_task_node(state: AgentState):
 
     history.append(f"Created admin review task in ClickUp (Priority: {priority_str}): {task_url or task_id}")
 
-    get_client().score_current_trace(name="workflow_interrupt", value=1, data_type="NUMERIC")
+    langfuse_context.score_current_trace(name="workflow_interrupt", value=1, data_type="NUMERIC")
 
     return {
         "admin_task_id": task_url,
@@ -627,7 +628,7 @@ async def clickup_push_node(state: AgentState):
         "debug_is_structured": is_struct
     }
 
-    get_client().score_current_trace(name="workflow_success", value=1, data_type="NUMERIC")
+    langfuse_context.score_current_trace(name="workflow_success", value=1, data_type="NUMERIC")
 
     return {
         "logs": logs,
