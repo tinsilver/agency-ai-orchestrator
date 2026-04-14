@@ -41,7 +41,7 @@ class LightweightValidator:
 
         # Send scores to current Langfuse trace
         for name, value in scores.items():
-            self.langfuse.score_current_trace(
+            self.langfuse.score_current_span(
                 name=name,
                 value=value,
                 data_type="BOOLEAN",
@@ -66,7 +66,7 @@ class LightweightValidator:
         }
 
         for name, value in scores.items():
-            self.langfuse.score_current_trace(
+            self.langfuse.score_current_span(
                 name=name,
                 value=value,
                 data_type="NUMERIC",
@@ -140,7 +140,7 @@ class LightweightValidator:
         ]
         for name in numeric_metrics:
             if name in metrics:
-                self.langfuse.score_current_trace(
+                self.langfuse.score_current_span(
                     name=name,
                     value=metrics[name],
                     data_type="NUMERIC",
@@ -149,14 +149,14 @@ class LightweightValidator:
         # Tool usage metrics
         for name, value in metrics.items():
             if name.startswith("tool_") and name.endswith("_calls"):
-                self.langfuse.score_current_trace(
+                self.langfuse.score_current_span(
                     name=name,
                     value=value,
                     data_type="NUMERIC",
                 )
 
         # Boolean metrics
-        self.langfuse.score_current_trace(
+        self.langfuse.score_current_span(
             name="enrichment_success",
             value=metrics["enrichment_success"],
             data_type="BOOLEAN",
@@ -164,7 +164,7 @@ class LightweightValidator:
 
         # Categorical metric: stop reason
         if state.get("enrichment_stop_reason"):
-            self.langfuse.score_current_trace(
+            self.langfuse.score_current_span(
                 name="enrichment_stop_reason",
                 value=state["enrichment_stop_reason"],
                 data_type="CATEGORICAL",
