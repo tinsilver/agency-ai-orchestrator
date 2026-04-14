@@ -34,9 +34,11 @@ async def handle_webhook(payload: WebhookPayload, background_tasks: BackgroundTa
     clean_client_id = sanitize_domain(payload.client_id)
 
     get_client().update_current_span(
-        session_id=f"webhook-{clean_client_id}",
-        user_id=clean_client_id,
-        tags=["webhook", "production"],
+        metadata={
+            "session_id": f"webhook-{clean_client_id}",
+            "user_id": clean_client_id,
+            "tags": ["webhook", "production"],
+        }
     )
 
     input_state = {
