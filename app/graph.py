@@ -371,11 +371,17 @@ async def create_admin_task_node(state: AgentState):
         tags=tags,
         priority=priority,
         assignees=assignees,
-        status="INCOMPLETE"
+        status="incomplete"
     )
 
     task_id = result.get("id")
     task_url = result.get("url")
+
+    # Attach original request text
+    if task_id and request:
+        await clickup_service.create_task_attachment(
+            task_id, request.encode("utf-8"), "original_request.txt", "text/plain"
+        )
 
     # Add checklist for missing information items (if any)
     if task_id and missing:
@@ -568,13 +574,21 @@ async def clickup_push_node(state: AgentState):
         description=description,
         tags=tags,
         priority=priority,
-        assignees=assignees
+        assignees=assignees,
+        status="to do"
     )
-    
+
     task_id = result.get("id")
     task_url = result.get("url")
 
-    # 2. Add Checklist if task created and items exist
+    # 2. Attach original request text
+    raw_request = state.get("raw_request", "")
+    if task_id and raw_request:
+        await clickup_service.create_task_attachment(
+            task_id, raw_request.encode("utf-8"), "original_request.txt", "text/plain"
+        )
+
+    # 3. Add Checklist if task created and items exist
     if task_id and checklist_items:
         checklist_res = await clickup_service.create_checklist(task_id, "Definition of Done")
         checklist_id = checklist_res.get("checklist", {}).get("id")
@@ -583,7 +597,7 @@ async def clickup_push_node(state: AgentState):
             for item in checklist_items:
                 await clickup_service.create_checklist_item(checklist_id, item)
 
-    # 3. Upload Attachments
+    # 4. Upload Attachments
     attached_files = state.get("attached_files", [])
     if task_id and attached_files:
         for file_id in attached_files:

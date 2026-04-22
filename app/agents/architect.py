@@ -84,6 +84,13 @@ class ArchitectAgent:
         plan: TaskPlan = result["parsed"]
         usage = result["raw"].response_metadata.get("usage", {})
 
+        if plan is None:
+            raise ValueError(
+                f"Architect agent failed to produce structured output. "
+                f"Parsing error: {result.get('parsing_error')}. "
+                f"Raw response: {result['raw'].content[:200]}"
+            )
+
         return {
             "content": plan.model_dump(),
             "model": self.llm.model,
