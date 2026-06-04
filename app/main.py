@@ -22,6 +22,10 @@ app = FastAPI(title="Agency AI Orchestrator", lifespan=lifespan, redirect_slashe
 def read_root():
     return {"status": "ok", "service": "Agency AI Orchestrator"}
 
+@app.get("/health")
+def health():
+    return {"status": "ok"}
+
 @app.post("/webhook")
 @observe(name="webhook-workflow")
 async def handle_webhook(payload: WebhookPayload, background_tasks: BackgroundTasks):
